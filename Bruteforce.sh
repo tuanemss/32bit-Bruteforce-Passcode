@@ -252,6 +252,7 @@ device_enter_mode() {
             
             
             if [[ $device_proc == 5 ]]; then
+                if [[ -n $device_pwnd ]]; then
                     log "Already in pwned DFU: $device_pwnd"
                 else
                     [[ $device_mode != "DFU" ]] && device_enter_mode DFU
