@@ -591,23 +591,18 @@ create_sshrd() {
         "$dir/hfsplus" Ramdisk.raw chmod 755 usr/bin/device_infos
     fi
     
+    
     if [[ -s ../resources/restored_external ]]; then
         "$dir/hfsplus" Ramdisk.raw rm usr/local/bin/restored_external.real 2>/dev/null
         "$dir/hfsplus" Ramdisk.raw add ../resources/restored_external usr/local/bin/restored_external.sshrd
         "$dir/hfsplus" Ramdisk.raw chmod 755 usr/local/bin/restored_external.sshrd
     fi
+    
     if [[ -s ../resources/setup.sh ]]; then
         "$dir/hfsplus" Ramdisk.raw rm usr/local/bin/restored_external 2>/dev/null
         
         # Prepare setup.sh
         cp ../resources/setup.sh setup.temp
-        
-        # Add -u flag for legacy devices (iOS 5 and lower)
-        # iPad1,1 = iOS 5.1.1, iPod3,1 = iOS 5.1.1, Proc 0/1 = ARMv6 (iOS 3/4)
-        if [[ $device_type == "iPad1,1" || $device_type == "iPod3,1" || $device_proc == 0 || $device_proc == 1 ]]; then
-            log "Legacy iOS verified. Adding '-u' flag to bruteforce..."
-            sed -i '' 's|/usr/bin/bruteforce|/usr/bin/bruteforce -u|g' setup.temp
-        fi
         
         "$dir/hfsplus" Ramdisk.raw add setup.temp usr/local/bin/restored_external
         "$dir/hfsplus" Ramdisk.raw chmod 755 usr/local/bin/restored_external
@@ -631,10 +626,7 @@ create_sshrd() {
     
     # Patch Kernel
     log "Patching Kernelcache..."
-    if [[ $device_type == "iPad1,1" ]]; then
-        log "iPad 1 skipping kernel patch."
-        cp Kernelcache.dec Kernelcache.patched
-    elif [[ $device_proc == 0 ]]; then
+    if [[ $device_proc == 0 ]]; then
         # S5L8900 Kernel Patching
         log "S5L8900 kernel patch from legacy ios kit."
         $bspatch Kernelcache.dec Kernelcache.patched ../resources/patch/kernelcache.release.s5l8900x.patch
@@ -791,6 +783,8 @@ boot_sshrd() {
 
 # ==================== MAIN ====================
 
+
+
 main() {
     clear
     echo "======================================"
@@ -819,8 +813,7 @@ main() {
 
 # ==================== INIT ====================
 
-color_R=$(tput setaf 1); color_G=$(tput setaf 2); color_Y=$(tput setaf 3)
-color_B=$(tput setaf 6); color_N=$(tput sgr0)
+color_R=$(tput setaf 1); color_G=$(tput setaf 2); color_Y=$(tput setaf 3); color_N=$(tput sgr0)
 
 for arg in "$@"; do
     case $arg in
@@ -833,3 +826,4 @@ done
 
 mkdir -p "tmp$$"; cd "tmp$$" || exit 1
 main
+tput sgr0
