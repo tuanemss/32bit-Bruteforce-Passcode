@@ -641,6 +641,8 @@ create_sshrd() {
             local ios_major="6"
             case $device_target_build in
                 13*) ios_major="9";;
+                12*) ios_major="8";;
+                11*) ios_major="7";;
                 10*) ios_major="6";;
                 9*) ios_major="5";;
                 8*) ios_major="4";;

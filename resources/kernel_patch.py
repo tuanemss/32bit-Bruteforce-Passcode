@@ -2,7 +2,7 @@
 """
 Kernel Patcher for Bruteforce Tool
 Based on patches from iphone-dataprotection project
-Covers iOS 4, 5, 6 and ARMv6 devices
+Covers iOS 4, 5, 6, 7, 8, 9 and ARMv6 devices
 """
 import sys
 import pathlib
@@ -16,12 +16,31 @@ def patch_kernel(input_path: pathlib.Path, target_os: str, target_arch: str):
         print(f"Error reading {input_path}: {e}")
         return False
 
+    # Common replacement for IOAESAccelerator as requested by user
+    # 0C 46 0C 46 (NOP-like behavior)
+    ioaes_repl = bytes.fromhex("B0 F5 FA 6F 0C 46 0C 46")
+
     # Patch Definitions
     patches_map = {
+        "9": [
+            ("IOAESAccelerator enable UID (iOS 9)", 
+             bytes.fromhex("B0 F5 FA 6F 00 F0 82 80"), 
+             ioaes_repl),
+        ],
+        "8": [
+            ("IOAESAccelerator enable UID (iOS 8)", 
+             bytes.fromhex("B0 F5 FA 6F 00 F0 82 80"), 
+             ioaes_repl),
+        ],
+        "7": [
+            ("IOAESAccelerator enable UID (iOS 7)", 
+             bytes.fromhex("B0 F5 FA 6F 00 F0 A2 80"), 
+             ioaes_repl),
+        ],
         "6": [
             ("IOAESAccelerator enable UID (iOS 6)", 
              bytes.fromhex("B0 F5 FA 6F 00 F0 92 80"), 
-             bytes.fromhex("B0 F5 FA 6F 00 20 00 20")),
+             ioaes_repl),
             ("_PE_i_can_has_debugger (iOS 6)", 
              bytes.fromhex("80 B1 43 F2 BE 01 C0 F2"), 
              bytes.fromhex("01 20 70 47 BE 01 C0 F2")),
@@ -100,9 +119,6 @@ def patch_kernel(input_path: pathlib.Path, target_os: str, target_arch: str):
         else:
             print(f"Warning: No specific patches for iOS {target_os}. Using iOS 6 as fallback.")
             selected_patches = patches_map.get("6", [])
-            
-            # For unknown versions, maybe we should try iOS 5/4 signatures too if they don't conflict?
-            # But that caused the original issue. Safer to stick to one set.
 
     patched_count = 0
     
@@ -134,7 +150,7 @@ def patch_kernel(input_path: pathlib.Path, target_os: str, target_arch: str):
 def main():
     parser = argparse.ArgumentParser(description="Kernel Patcher")
     parser.add_argument("file", help="Input kernel file")
-    parser.add_argument("--os", help="Target iOS major version (4, 5, 6, 9)", default="6")
+    parser.add_argument("--os", help="Target iOS major version (4, 5, 6, 7, 8, 9)", default="6")
     parser.add_argument("--arch", help="Target architecture (armv6, armv7)", default="armv7")
     
     if len(sys.argv) < 2:
