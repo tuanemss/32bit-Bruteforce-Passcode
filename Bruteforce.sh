@@ -768,7 +768,7 @@ boot_sshrd() {
 
     device_enter_mode pwnDFU
     
-    if [[ $device_proc == 5 ]]; then
+    if [[ $device_proc == 5 || $device_proc == 6 ]]; then
         ipwndfu_send_ibss
         
         log "Waiting for device to reconnect..."
