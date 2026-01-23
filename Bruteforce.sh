@@ -510,9 +510,11 @@ select_ramdisk_version() {
         print "* A5/A6 device - select iOS version:"
         print "  1. iOS 6.1.3 (10B329)"
         print "  2. iOS 9.0.2 (13A452) [default]"
-        read -p "$(input 'Enter choice [1/2]: ')" ver_choice
+        print "  3. Enter Build Number"
+        read -p "$(input 'Enter choice [1/2/3]: ')" ver_choice
         case "${ver_choice:-2}" in
             1) device_target_build="10B329";;
+            3) read -p "$(input 'Enter Build Number (e.g. 9B206): ')" device_target_build;;
             *) device_target_build="13A452";;
         esac
     fi
@@ -635,7 +637,20 @@ create_sshrd() {
         cp Kernelcache.dec Kernelcache.dec.bak
         "$dir/xpwntool" Kernelcache.dec Kernelcache.raw
         if [[ -s ../resources/kernel_patch.py ]]; then
-            python3 ../resources/kernel_patch.py Kernelcache.raw
+            # Determine OS version from build ID
+            local ios_major="6"
+            case $device_target_build in
+                13*) ios_major="9";;
+                10*) ios_major="6";;
+                9*) ios_major="5";;
+                8*) ios_major="4";;
+            esac
+            
+            # Determine Arch
+            local cpu_arch="armv7"
+            [[ $device_proc -le 1 ]] && cpu_arch="armv6"
+
+            python3 ../resources/kernel_patch.py Kernelcache.raw --os $ios_major --arch $cpu_arch
             if [[ -s Kernelcache.patched ]]; then
                 "$dir/xpwntool" Kernelcache.patched Kernelcache.dec -t Kernelcache.dec.bak
                 log "Kernel patched successfully."
