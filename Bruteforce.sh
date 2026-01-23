@@ -724,6 +724,18 @@ ipwndfu_send_ibss() {
     [[ -s ../saved/$device_type/pwnediBSS ]] && cp ../saved/$device_type/pwnediBSS .
     [[ ! -s pwnediBSS ]] && error "pwnediBSS not found."
     
+    if [[ -x $primepwn ]]; then
+        log "Sending pwnediBSS using primepwn..."
+        $primepwn pwnediBSS
+        local ret=$?
+        if [[ $ret == 0 ]]; then
+            log "pwnediBSS sent."
+            sleep 2
+            return
+        fi
+        warn "primepwn failed, falling back to ipwndfu..."
+    fi
+
     log "Sending pwnediBSS using ipwndfu..."
     local python2="$(command -v python2)"
     local pyenv2="$HOME/.pyenv/versions/2.7.18/bin/python2"
