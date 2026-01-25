@@ -15,6 +15,7 @@ You'll need to compile it to get the necessary tools, and it also contains impor
 ---
 
 ## Kernel Patcher 
+script [here](https://github.com/tuanemss/32bit-Bruteforce-Passcode/blob/main/resources/kernel_patch.py)
 
 | Version | Key Patch (Pattern -> Replacement) | Description |
 | :--- | :--- | :--- |
