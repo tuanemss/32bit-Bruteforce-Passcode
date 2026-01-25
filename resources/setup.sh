@@ -18,4 +18,4 @@ if [ -x /bin/mount.sh ]; then
 fi
 
 # Run Bruteforce
-/usr/bin/bruteforce > /dev/console
+/usr/bin/bruteforce -u > /dev/console

