@@ -6,7 +6,7 @@ A professional ramdisk-based solution for bruteforcing 4-digit passcodes on all 
 
 ## Introduction
 
-I did this based on the source code of iphone-dataprotection, legacy-ios-kit, 32bit ramdisk by moewcat
+I did this based on the source code of iphone-dataprotection, legacy-ios-kit, 32bit ramdisk by meowcat
 
 You can easily find the source code here [iphone-dataprotection](https://github.com/dinosec/iphone-dataprotection)
 
