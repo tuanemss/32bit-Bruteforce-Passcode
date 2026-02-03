@@ -1028,6 +1028,13 @@ main() {
     echo "======================================"
     echo
     [[ $EUID == 0 ]] && error "Do not run as root."
+    
+    # Check if python2 is installed
+    if [[ -z "$(command -v python2)" ]]; then
+        warn "python2 was not found. It is not recommended to run this script without it as many features are dependent on it."
+        printf "\n"
+    fi
+    
     # Resources check moved to init section for reliability
     set_tool_paths
     device_get_info
