@@ -20,14 +20,3 @@ fi
 # Run Bruteforce
 /usr/bin/bruteforce -u > /dev/console
 
-echo "Fixing disabled"
-
-cd /mnt2/mobile/Library/Preferences/
-for file in com.apple.springboard.plist.???????; do
-    if [ -f "$file" ]; then
-        rm "$file" > /dev/null
-    fi
-done
-# mv /mnt2/mobile/Library/Preferences/com.apple.springboard.plist /mnt2/mobile/Library/Preferences/com.apple.springboard.plist.bak > /dev/null
-# rm /mnt2/mobile/Library/Preferences/com.apple.springboard.plist > /dev/null
-# rm /mnt2/mobile/Library/SpringBoard/LockoutStateJournal.plist > /dev/null
