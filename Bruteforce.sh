@@ -166,14 +166,9 @@ device_get_name() {
 }
 
 device_get_info() {
-    if [[ $main_argmode == "device_enter_ramdisk_menu" ]]; then
-        log "Assuming device is in SSH ramdisk mode"
-        device_mode="Normal"
-    else
-        log "Finding device..."
-        $ideviceinfo -s >/dev/null 2>&1 && device_mode="Normal"
-        [[ -z $device_mode ]] && device_mode="$($irecovery -q 2>/dev/null | grep -w "MODE" | cut -c 7- | xargs)"
-    fi
+    log "Finding device..."
+    $ideviceinfo -s >/dev/null 2>&1 && device_mode="Normal"
+    [[ -z $device_mode ]] && device_mode="$($irecovery -q 2>/dev/null | grep -w "MODE" | cut -c 7- | xargs)"
     if [[ -z $device_mode ]]; then
         local error_msg=$'* Make sure to trust this computer on the device screen.\n* Double-check if the device is detected by iTunes/Finder.\n* Try using a different USB port or cable.'
         error "No device found! Connect your iOS device." "$error_msg"
@@ -242,12 +237,10 @@ device_get_info() {
     echo
     
     case $device_type in
-        iPhone1,1 | iPod1,1 ) device_proc=0;; # S5L8900
-        iPhone1,2 | iPod2,1 ) device_proc=1;; # S5L8720
-        iPhone2,1 | iPod3,1 ) device_proc=2;; # S5L8920
-        iPhone3,[123] | iPod4,1 | iPad1,1 ) device_proc=4;; # A4
+        iPhone1,* | iPod1,1 ) device_proc=1;; # S5L8900
+        iPad1,1 | iPhone[23],* | iPod[234],1 ) device_proc=4;; # A4/S5L8720/S5L8920/8922
         iPad2,* | iPad3,[123] | iPhone4,1 | iPod5,1 ) device_proc=5;; # A5
-        iPad3,[456] | iPhone5,* ) device_proc=6;; # A6
+        iPad3,* | iPhone5,* ) device_proc=6;; # A6
         *) error "Device not supported: $device_type";;
     esac
     all_flash="Firmware/all_flash/all_flash.${device_model}ap.production"
@@ -298,8 +291,8 @@ enter_pwndfu() {
         return
     fi
     
-    # 1. Handle S5L8900 (2G, 3G, iPod 1, iPod 2) - "WTF" Exploit
-    if [[ $device_proc == 0 || $device_proc == 1 ]]; then
+    # 1. Handle S5L8900 (2G, 3G, iPod 1) - "WTF" Exploit
+    if [[ $device_proc == 1 ]]; then
         [[ $device_mode != "DFU" ]] && device_enter_mode DFU
         if [[ $device_pwnd == "Pwnage 2.0" ]]; then
             log "Already in Pwnage 2.0 mode."
@@ -348,7 +341,7 @@ enter_pwndfu() {
     fi
 
     # 2. Handle S5L8920 (3GS, iPod 3) - Alloc8
-    if [[ $device_proc == 2 ]]; then 
+    if [[ $device_type == "iPhone2,1" || $device_type == "iPod3,1" ]]; then 
          if [[ -n $device_pwnd ]]; then
               log "Already in pwned DFU."
               return
@@ -403,8 +396,11 @@ enter_pwndfu() {
              download_from_url "https://github.com/LukeZGD/ipwndfu/archive/refs/heads/master.zip" ipwndfu.zip
              unzip -q ipwndfu.zip -d $PROJECT_ROOT/resources/
              rm -rf $PROJECT_ROOT/resources/ipwndfu
-             mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
-         fi
+                mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
+                # Patch ipwndfu to handle "no langid" error
+                sed -i '' 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py" 2>/dev/null || \
+                sed -i 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py"
+            fi
          cp "$alloc8_ibss" $PROJECT_ROOT/resources/ipwndfu/
          
          # Run alloc8
@@ -449,7 +445,10 @@ enter_pwndfu() {
     [[ $device_mode != "DFU" ]] && device_enter_mode DFU
     
     local tool="gaster"
-    if [[ $device_proc == 4 ]]; then
+    if [[ $device_type == "iPhone2,1" || $device_type == "iPod3,1" ]]; then
+        tool="ipwnder"
+        [[ $platform == "macos" ]] && tool="reipwnder"
+    elif [[ $device_type == "iPod2,1" || $device_proc == 4 ]]; then
         tool="primepwn"
         [[ $platform == "macos" ]] && tool="reipwnder"
     elif [[ $device_proc == 6 ]]; then
@@ -487,6 +486,9 @@ enter_pwndfu() {
                 unzip -q ipwndfu.zip -d $PROJECT_ROOT/resources/
                 rm -rf $PROJECT_ROOT/resources/ipwndfu
                 mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
+                # Patch ipwndfu to handle "no langid" error
+                sed -i '' 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py" 2>/dev/null || \
+                sed -i 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py"
             fi
             
             pushd $PROJECT_ROOT/resources/ipwndfu >/dev/null
@@ -658,16 +660,18 @@ create_sshrd() {
             * ) path="";;
         esac
         
+        log "$getcomp"
         # Fallback names
         if [[ -z $name ]]; then
-             if [[ $device_proc == 0 && $getcomp == "Kernelcache" ]]; then
-                 name="kernelcache.release.s5l8900x"
-             elif [[ $getcomp == "iBSS" ]]; then name="iBSS.$device_model.RELEASE.dfu";
+             if [[ $getcomp == "iBSS" ]]; then name="iBSS.$device_model.RELEASE.dfu";
              elif [[ $getcomp == "iBEC" ]]; then name="iBEC.$device_model.RELEASE.dfu"; 
              fi
         fi
+        # S5L8900 Kernelcache has a generic name
+        if [[ $device_proc == 1 && $getcomp == "Kernelcache" ]]; then
+            name="kernelcache.release.s5l8900x"
+        fi
         
-        log "$getcomp"
         [[ -s $ramdisk_path/$name ]] && cp $ramdisk_path/$name . || "$dir/pzb" -g "${path}$name" -o "$name" "$ipsw_url"
         [[ ! -s $name ]] && error "Failed to get $name."
         [[ ! -s $ramdisk_path/$name ]] && cp $name $ramdisk_path/
@@ -681,7 +685,7 @@ create_sshrd() {
     "$dir/hfsplus" Ramdisk.raw grow 30000000
     "$dir/hfsplus" Ramdisk.raw untar $PROJECT_ROOT/resources/sshrd/sbplist.tar 2>/dev/null
     
-    if [[ $device_proc == 0 || $device_proc == 1 || $device_type == "iPad1,1" ]]; then
+    if [[ $device_proc == 1 || $device_type == "iPod2,1" || $device_type == "iPad1,1" ]]; then
         log "Legacy device detected (ARMv6 or iOS 5). Using Legacy SSH..."
         if [[ -s $PROJECT_ROOT/resources/sshrd/ssh_old.tar ]]; then
             "$dir/hfsplus" Ramdisk.raw untar $PROJECT_ROOT/resources/sshrd/ssh_old.tar
@@ -746,9 +750,13 @@ create_sshrd() {
     
     # Patch iBSS
     log "Patching iBSS..."
-    "$dir/xpwntool" iBSS.dec iBSS.raw
-    "$dir/iBoot32Patcher" iBSS.raw iBSS.patched --rsa --debug
-    "$dir/xpwntool" iBSS.patched iBSS -t iBSS.dec
+    if [[ $device_proc == 1 || $device_type == "iPod2,1" ]]; then
+        $bspatch iBSS.orig iBSS $PROJECT_ROOT/resources/patch/iBSS.${device_model}ap.RELEASE.patch
+    else
+        "$dir/xpwntool" iBSS.dec iBSS.raw
+        "$dir/iBoot32Patcher" iBSS.raw iBSS.patched --rsa --debug
+        "$dir/xpwntool" iBSS.patched iBSS -t iBSS.dec
+    fi
     
     # Patch iBEC
     log "Patching iBEC..."
@@ -758,10 +766,13 @@ create_sshrd() {
     
     # Patch Kernel
     log "Patching Kernelcache..."
-    if [[ $device_proc == 0 ]]; then
+    if [[ $device_proc == 1 ]]; then
         # S5L8900 Kernel Patching
         log "S5L8900 kernel patch from legacy ios kit."
         $bspatch Kernelcache.dec Kernelcache.patched $PROJECT_ROOT/resources/patch/kernelcache.release.s5l8900x.patch
+    elif [[ $device_type == "iPod2,1" ]]; then
+        log "iPod touch 2 kernel patch."
+        $bspatch Kernelcache.dec Kernelcache.patched $PROJECT_ROOT/resources/patch/kernelcache.release.n72.patch
     else 
         # kernel Patch
         cp Kernelcache.dec Kernelcache.dec.bak
@@ -776,11 +787,12 @@ create_sshrd() {
                 10*) ios_major="6";;
                 9*) ios_major="5";;
                 8*) ios_major="4";;
+                7*) ios_major="3";;
             esac
             
             # Determine Arch
             local cpu_arch="armv7"
-            [[ $device_proc -le 1 ]] && cpu_arch="armv6"
+            [[ $device_proc == 1 || $device_type == "iPod2,1" ]] && cpu_arch="armv6"
 
             python3 $PROJECT_ROOT/resources/kernel_patch.py Kernelcache.raw --os $ios_major --arch $cpu_arch
             if [[ -s Kernelcache.patched ]]; then
@@ -838,8 +850,14 @@ patch_ibss_for_sending() {
     iv=$(echo $device_fw_key | $jq -j '.keys[] | select(.image == "iBSS") | .iv')
     key=$(echo $device_fw_key | $jq -j '.keys[] | select(.image == "iBSS") | .key')
     "$dir/xpwntool" iBSS.orig iBSS.dec -iv $iv -k $key -decrypt
-    "$dir/xpwntool" iBSS.dec iBSS.raw
-    "$dir/iBoot32Patcher" iBSS.raw pwnediBSS --rsa
+    
+    if [[ $device_proc == 1 || $device_type == "iPod2,1" ]]; then
+        log "Patching iBSS for legacy device..."
+        $bspatch iBSS.orig pwnediBSS $PROJECT_ROOT/resources/patch/iBSS.${device_model}ap.RELEASE.patch
+    else
+        "$dir/xpwntool" iBSS.dec iBSS.raw
+        "$dir/iBoot32Patcher" iBSS.raw pwnediBSS --rsa
+    fi
     
     if [[ ! -s pwnediBSS ]]; then
         error "Failed to create pwnediBSS."
@@ -922,6 +940,12 @@ boot_sshrd() {
         $irecovery -f $ramdisk_path/iBEC
         $irecovery -c go
         sleep 3
+    elif [[ $device_proc == 1 || $device_type == "iPod2,1" ]]; then
+        log "Sending iBSS..."; $irecovery -f $ramdisk_path/iBSS; sleep 2
+        # iOS 3 and 4 legacy devices usually don't need/want iBEC for ramdisk
+        if [[ $device_target_build != "7"* && $device_target_build != "8"* ]]; then
+            log "Sending iBEC..."; $irecovery -f $ramdisk_path/iBEC; sleep 3
+        fi
     else
         log "Sending iBSS..."; $irecovery -f $ramdisk_path/iBSS; sleep 2
         log "Sending iBEC..."; $irecovery -f $ramdisk_path/iBEC; sleep 3
@@ -936,76 +960,6 @@ boot_sshrd() {
     log "Booting..."
     log "Bruteforce will auto-run on device screen."
     print "* Passcode will be shown on device when found."
-}
-
-
-# ==================== SSH FUNCTIONS ====================
-
-device_iproxy() {
-    killall iproxy 2>/dev/null
-    log "Starting iproxy..."
-    "$iproxy" $ssh_port 22 >/dev/null 2>&1 &
-    iproxy_pid=$!
-    sleep 1
-}
-
-device_ssh() {
-    device_iproxy
-    log "Connecting to SSH (root@127.0.0.1:$ssh_port)..."
-    $ssh2 -p $ssh_port root@127.0.0.1
-    kill $iproxy_pid 2>/dev/null
-}
-
-fetch_passcode() {
-    device_iproxy
-    log "Searching for passcode results..."
-    local found passcode
-    
-    # Prioritize searching in root directory / (where results typically appear)
-    found=$($ssh2 -p $ssh_port root@127.0.0.1 "grep -l \"passcode\" /* 2>/dev/null | head -n 1")
-    
-    # Fallback to general search in common locations
-    if [[ -z $found ]]; then
-        found=$($ssh2 -p $ssh_port root@127.0.0.1 "grep -l \"passcode\" /mnt2/*.plist /tmp/*.plist 2>/dev/null | head -n 1")
-    fi
-
-    # Deep search as a last resort
-    if [[ -z $found ]]; then
-        warn "Initial search found nothing. Starting deep search from /..."
-        found=$($ssh2 -p $ssh_port root@127.0.0.1 "find / -type f -not -path \"/mnt1/*\" -exec grep -l \"passcode\" {} + 2>/dev/null | head -n 1")
-    fi
-    
-    if [[ -n $found ]]; then
-        print "Found passcode result in: $found"
-        # Try to extract from XML plist structure
-        passcode=$($ssh2 -p $ssh_port root@127.0.0.1 "grep -A1 \"passcode\" \"$found\" 2>/dev/null | grep -o \">.*<\" | sed 's/[><]//g' | head -n 1")
-        
-        # If extraction failed, just show the line containing the word
-        [[ -z $passcode ]] && passcode=$($ssh2 -p $ssh_port root@127.0.0.1 "grep \"passcode\" \"$found\" | head -n 1")
-
-        echo
-        echo "======================================"
-        echo -e "      ${color_G}FOUND PASSCODE: ${color_Y}${passcode:-Unknown}${color_N}"
-        echo "======================================"
-        echo
-        
-        print "File content ($found):"
-        echo "--------------------------------------"
-        $ssh2 -p $ssh_port root@127.0.0.1 "cat \"$found\""
-        echo "--------------------------------------"
-    else
-        error "Could not find any passcode results on the device."
-    fi
-    kill $iproxy_pid 2>/dev/null
-}
-
-mount_partitions() {
-    device_iproxy
-    log "Mounting partitions..."
-    $ssh2 -p $ssh_port root@127.0.0.1 "mount.sh root" 2>/dev/null
-    $ssh2 -p $ssh_port root@127.0.0.1 "mount.sh" 2>/dev/null
-    log "Partitions mounted. Access them at /mnt1 (System) and /mnt2 (Data)."
-    kill $iproxy_pid 2>/dev/null
 }
 
 
@@ -1028,40 +982,20 @@ main() {
     echo "======================================"
     echo
     [[ $EUID == 0 ]] && error "Do not run as root."
+    
     # Resources check moved to init section for reliability
     set_tool_paths
+    # Check if python2 is installed
+    if [[ -z "$(command -v python2)" ]]; then
+        warn "python2 not found. It is not recommended to run this script without it as many features are dependent on it."
+    fi
     device_get_info
     
     # 1. Create and Boot SSHRD
     create_sshrd
     boot_sshrd
-    # 2. Skip Utility Menu for iOS 6+
-    local major_ver="${device_target_build:0:2}"
-    if [[ "$major_ver" =~ ^[0-9]+$ ]] && [[ $major_ver -ge 10 ]]; then
-        log "Ramdisk boot sequence complete for iOS 6+ ($device_target_build). Exiting."
-        exit
-    fi
     
-    # 2. Ramdisk Menu (Utility Menu) - For iOS 5 and below
-    while true; do
-        echo
-        echo "================ UTILITY MENU ================"
-        echo "1. Fetch Found Passcode (via SSH)"
-        echo "2. SSH Terminal (root@127.0.0.1)"
-        echo "3. Mount Partitions"
-        echo "4. Reboot Device"
-        echo "q. Exit"
-        echo "=============================================="
-        read -p "$(input 'Select an option: ')" opt
-        case $opt in
-            1) fetch_passcode;;
-            2) device_ssh;;
-            3) mount_partitions;;
-            4) $irecovery -c "reboot"; exit;;
-            q) exit;;
-            *) echo "Invalid option.";;
-        esac
-    done
+    log "Ramdisk boot sequence complete. Exiting."
 }
 
 # ==================== INIT ====================
