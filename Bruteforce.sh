@@ -1028,8 +1028,13 @@ main() {
     echo "======================================"
     echo
     [[ $EUID == 0 ]] && error "Do not run as root."
+    
     # Resources check moved to init section for reliability
     set_tool_paths
+    # Check if python2 is installed
+    if [[ -z "$(command -v python2)" ]]; then
+        warn "python2 not found. It is not recommended to run this script without it as many features are dependent on it."
+    fi
     device_get_info
     
     # 1. Create and Boot SSHRD
