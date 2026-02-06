@@ -46,6 +46,7 @@ Usage: ./Bruteforce.sh [Options]
 
 Options:
     --help              Display this help
+    --menu              Show menu ramdisk 
     --entry-device      Manual device entry
     --debug             Enable debugging
 
@@ -107,7 +108,7 @@ set_tool_paths() {
     [[ ! -x $sshpass ]] && sshpass="$(command -v sshpass)"
     
     cp $PROJECT_ROOT/resources/ssh_config . 2>/dev/null
-    ssh_opts="-F ./ssh_config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    ssh_opts="-F ./ssh_config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -q"
     [[ $(ssh -V 2>&1 | grep -c "SSH_[89]\|SSH_1") != 0 ]] && echo "    PubkeyAcceptedAlgorithms +ssh-rsa" >> ssh_config
     
     if [[ -n $sshpass ]]; then
@@ -198,7 +199,6 @@ device_get_info() {
     device_model="$(echo $device_model | tr '[:upper:]' '[:lower:]')"
     device_model="${device_model%ap}"
     
-    # Device Type Fallback Mapping
     if [[ -z $device_type ]]; then
         case $device_model in
             m68  ) device_type="iPhone1,1";; n82  ) device_type="iPhone1,2";;
@@ -223,7 +223,6 @@ device_get_info() {
         esac
     fi
     
-    # If still empty, prompt user
     if [[ -z $device_type ]]; then
         warn "Could not detect device type automatically."
         device_entry
@@ -291,7 +290,7 @@ enter_pwndfu() {
         return
     fi
     
-    # 1. Handle S5L8900 (2G, 3G, iPod 1) - "WTF" Exploit
+    #WTF exploit
     if [[ $device_proc == 1 ]]; then
         [[ $device_mode != "DFU" ]] && device_enter_mode DFU
         if [[ $device_pwnd == "Pwnage 2.0" ]]; then
@@ -340,8 +339,8 @@ enter_pwndfu() {
         return
     fi
 
-    # 2. Handle S5L8920 (3GS, iPod 3) - Alloc8
-    if [[ $device_type == "iPhone2,1" || $device_type == "iPod3,1" ]]; then 
+    # 2. Handle S5L8920 (3GS only) - Alloc8 (remove)
+    if [[ $device_type == "iPhone2,1" ]]; then 
          if [[ -n $device_pwnd ]]; then
               log "Already in pwned DFU."
               return
@@ -911,7 +910,6 @@ ipwndfu_send_ibss() {
         mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
     fi
     
-    # Setup libusb symlink for macOS
     if [[ $platform == "macos" ]]; then
         [[ -e /opt/local/lib/libusb-1.0.dylib ]] && ln -sf /opt/local/lib "$HOME/lib"
         [[ -e /opt/homebrew/lib/libusb-1.0.dylib ]] && ln -sf /opt/homebrew/lib "$HOME/lib"
@@ -963,6 +961,62 @@ boot_sshrd() {
 }
 
 
+legacy_menu() {
+    echo
+    print "======================================"
+    print "::"
+    print "::          Menu RamDisk "
+    print "::"
+    print "::"
+    print "::             Hello"
+    print "::"
+    print "::"             
+    print "======================================"
+    print " 1. Show Passcode "
+    print " 2. Exit"
+    read -p "$(input 'Select an option [1-2]: ')" menu_choice
+    
+    case $menu_choice in
+        1)
+            log "Connecting to device via SSH..."
+
+            $iproxy $ssh_port 22 >/dev/null 2>&1 &
+            iproxy_pid=$!
+            sleep 2
+            
+            echo
+            print "* Finding passcode on device..."
+
+            $ssh2 -p $ssh_port root@localhost "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:\$PATH; echo \"Show Passcode\" > /dev/console; for file in /*; do
+    [ -f \"\$file\" ] || continue
+    # Process each match line-by-line to avoid merging results
+    sed -n '/passcode/{n;p;}' \"\$file\" 2>/dev/null | sed 's/[^0-9]//g' | while read -r res; do
+        case \$res in 
+            [0-9][0-9][0-9][0-9] | [0-9][0-9][0-9][0-9][0-9][0-9])
+                echo \"found : \$res\" > /dev/console
+                echo \"found : \$res\"
+                ;;
+        esac
+    done
+done"
+            
+
+            kill $iproxy_pid >/dev/null 2>&1
+            wait $iproxy_pid 2>/dev/null
+            echo
+            pause
+            legacy_menu
+            ;;
+        2)
+            log "Exiting."
+            exit
+            ;;
+        *)
+            legacy_menu
+            ;;
+    esac
+}
+
 # ==================== MAIN ====================
 
 
@@ -983,31 +1037,61 @@ main() {
     echo
     [[ $EUID == 0 ]] && error "Do not run as root."
     
-    # Resources check moved to init section for reliability
+
+    if [[ $legacy_argmode == "1" ]]; then
+        log "Menu ramdisk."
+
+        set_tool_paths
+        legacy_menu
+        return
+    fi
+
     set_tool_paths
-    # Check if python2 is installed
+
     if [[ -z "$(command -v python2)" ]]; then
         warn "python2 not found. It is not recommended to run this script without it as many features are dependent on it."
     fi
     device_get_info
-    
-    # 1. Create and Boot SSHRD
+
+
     create_sshrd
     boot_sshrd
     
-    log "Ramdisk boot sequence complete. Exiting."
+    log "Ramdisk boot sequence complete."
+    
+    local ios_major="6"
+    case $device_target_build in
+        13*) ios_major="9";;
+        12*) ios_major="8";;
+        11*) ios_major="7";;
+        10*) ios_major="6";;
+        9*) ios_major="5";;
+        8*) ios_major="4";;
+        7*) ios_major="3";;
+    esac
+
+    case $device_type in
+        iPhone1,* | iPhone2,1 | iPad1,1 | iPod1,1 | iPod2,1 | iPod3,1 )
+            legacy_menu
+            ;;
+        *)
+            log "Exiting."
+            ;;
+    esac
 }
 
 # ==================== INIT ====================
 
 color_R=$(tput setaf 1); color_G=$(tput setaf 2); color_Y=$(tput setaf 208); color_N=$(tput sgr0)
 
+legacy_argmode="0"
 for arg in "$@"; do
     case $arg in
         "--debug" ) set -x;;
         "--help" ) display_help; exit;;
         "--sshrd" ) ;; # default
         "--entry-device" ) device_argmode="entry";;
+        "--menu" ) legacy_argmode="1";;
     esac
 done
 
