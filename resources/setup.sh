@@ -19,3 +19,4 @@ fi
 
 # Run Bruteforce
 /usr/bin/bruteforce -u > /dev/console
+
