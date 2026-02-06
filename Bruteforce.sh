@@ -12,6 +12,9 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PROJECT_ROOT
 
 # ==================== UTILITY FUNCTIONS ====================
+REPO_OWNER="tuanemss"
+REPO_NAME="32bit-Bruteforce-Passcode"
+
 
 print() { echo "${color_B}${1}${color_N}"; }
 input() { echo "${color_Y}[Input] ${1}${color_N}"; }
@@ -1017,6 +1020,62 @@ done"
     esac
 }
 
+# ==================== AUTO-UPDATE ====================
+
+check_update() {
+    log "Checking for updates..."
+    # Fetch the latest commit SHA from the 'main' branch
+    local latest_commit=$(curl -s "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/commits/main" | grep '"sha":' | head -n 1 | cut -d '"' -f 4)
+    
+    if [[ -z "$latest_commit" ]]; then
+        warn "Could not check for updates (requires internet connection)."
+        return
+    fi
+
+    local current_version_file="$PROJECT_ROOT/.version"
+    local current_commit=""
+    [[ -f "$current_version_file" ]] && current_commit=$(cat "$current_version_file")
+
+    if [[ "$latest_commit" != "$current_commit" ]]; then
+        echo
+        print "************************************************"
+        print "::  A NEW UPDATE IS AVAILABLE ON GITHUB!       "
+        print "************************************************"
+        echo
+        read -p "$(input 'Would you like to update now? (y/n): ')" update_choice
+        if [[ "$update_choice" == "y" || "$update_choice" == "Y" ]]; then
+            perform_update "$latest_commit"
+        fi
+    else
+        log "Tool is up to date."
+    fi
+}
+
+perform_update() {
+    local target_commit=$1
+    log "Downloading update..."
+    
+    curl -L "https://github.com/$REPO_OWNER/$REPO_NAME/archive/refs/heads/main.zip" -o update.zip
+    if [[ $? -ne 0 ]]; then
+        error "Failed to download update from GitHub."
+    fi
+
+    log "Extracting files..."
+    mkdir -p update_extract
+    unzip -qo update.zip -d update_extract
+    
+    log "Applying update..."
+    cp -rf update_extract/$REPO_NAME-main/* "$PROJECT_ROOT/"
+    
+    echo "$target_commit" > "$PROJECT_ROOT/.version"
+    
+    rm -rf update.zip update_extract
+
+    log "Update applied successfully! Relaunching..."
+    chmod +x "$PROJECT_ROOT/Bruteforce.sh"
+    exec "$PROJECT_ROOT/Bruteforce.sh" "$@"
+}
+
 # ==================== MAIN ====================
 
 
@@ -1034,6 +1093,9 @@ main() {
     echo "::    BASE: LEGACY-IOS-KIT BY LUKEZGD"
     echo "::"
     echo "======================================"
+    echo
+    
+    check_update
     echo
     [[ $EUID == 0 ]] && error "Do not run as root."
     
