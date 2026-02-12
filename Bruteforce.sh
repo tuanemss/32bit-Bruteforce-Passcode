@@ -524,7 +524,11 @@ enter_pwndfu() {
             log "Device is now in $cur_mode mode (pwn & iBSS upload successful)."
             device_pwnd="pwned"
         else
-            error "Failed to pwn device (Verification failed). \nOutput: $irec_out \nPlease try putting it in pwned DFU manually using: $dir/ipwnder32 -p"
+            warn "Failed to detect pwned DFU mode."
+            warn "Will proceed to send ramdisk directly..."
+            # Mark as fallback mode - will skip pwndfu requirements in boot_sshrd
+            device_pwnd="fallback"
+            return
         fi
     fi
     log "Device in pwned DFU: $device_pwnd"
@@ -933,6 +937,32 @@ ipwndfu_send_ibss() {
 boot_sshrd() {
     local ramdisk_path="$PROJECT_ROOT/saved/$device_type/ramdisk_$device_target_build"
 
+    # Check if we're in fallback mode (pwndfu failed)
+    if [[ $device_pwnd == "fallback" ]]; then
+        warn "Entering fallback mode: sending ramdisk without pwndfu"
+        
+        # Try to enter Recovery mode if not already there
+        if [[ $device_mode != "Recovery" && $device_mode != "DFU" ]]; then
+            device_enter_mode Recovery
+        fi
+        
+        # For fallback mode, send components directly
+        log "Sending iBSS..."; $irecovery -f $ramdisk_path/iBSS; sleep 2
+        log "Sending iBEC..."; $irecovery -f $ramdisk_path/iBEC; sleep 3
+        
+        device_find_mode Recovery
+        log "Sending ramdisk..."; $irecovery -f $ramdisk_path/Ramdisk.dmg
+        $irecovery -c "getenv ramdisk-delay"
+        $irecovery -c ramdisk; sleep 2
+        log "Sending DeviceTree..."; $irecovery -f $ramdisk_path/DeviceTree.dec; $irecovery -c devicetree
+        log "Sending Kernelcache..."; $irecovery -f $ramdisk_path/Kernelcache.dec; $irecovery -c bootx
+        log "Booting..."
+        log "Bruteforce will auto-run on device screen."
+        print "* Passcode will be shown on device when found."
+        return
+    fi
+
+    # Normal pwndfu mode
     device_enter_mode pwnDFU
     
     if [[ $device_proc == 5 || $device_proc == 6 ]]; then
