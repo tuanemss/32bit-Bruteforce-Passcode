@@ -15,9 +15,7 @@ def patch_kernel(input_path: pathlib.Path, target_os: str, target_arch: str):
     except Exception as e:
         print(f"Error reading {input_path}: {e}")
         return False
-
-    # Common replacement for IOAESAccelerator as requested by user
-    # 0C 46 0C 46 (NOP-like behavior)
+    #NOP
     ioaes_repl = bytes.fromhex("B0 F5 FA 6F 0C 46 0C 46")
 
     # Patch Definitions
