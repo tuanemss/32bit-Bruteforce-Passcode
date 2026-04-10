@@ -49,4 +49,4 @@ cd /path/bruteforce
 
 - **NyanSatan** — [checkm8_bootkit](https://github.com/NyanSatan/checkm8_bootkit)
 
-- **Lukezgd**  -  [legacy ios kit](https://github.com/LukeZGD/Legacy-iOS-Kit)
+- **Lukezgd**   — [legacy ios kit](https://github.com/LukeZGD/Legacy-iOS-Kit)
