@@ -78,6 +78,7 @@ set_tool_paths() {
         sudoloop_pid=$!
         gaster="sudo $dir/gaster"; ipwnder="sudo $dir/ipwnder"
         irecovery="sudo $dir/irecovery"; primepwn="sudo $dir/primepwn"
+        checkm8_bootkit="sudo $dir/checkm8_bootkit"
         sudo killall -9 usbmuxd usbmuxd2 2>/dev/null
         sudo -b $dir/usbmuxd -pf 2>/dev/null
     elif [[ $OSTYPE == "darwin"* ]]; then
@@ -92,6 +93,7 @@ set_tool_paths() {
         scp2="/usr/bin/scp"; ssh2="/usr/bin/ssh"
         gaster="$dir/gaster"; ipwnder="$dir/ipwnder"
         irecovery="$dir/irecovery"; primepwn="$dir/primepwn"
+        checkm8_bootkit="$dir/checkm8_bootkit"
         a6meowing="$dir/a6meowing"
         killall -STOP AMPDevicesAgent AMPDeviceDiscoveryAgent MobileDeviceUpdater 2>/dev/null
         trap "clean" EXIT
@@ -883,55 +885,17 @@ ipwndfu_send_ibss() {
     [[ ! -s pwnediBSS ]] && [[ ! -s $PROJECT_ROOT/saved/$device_type/pwnediBSS ]] && patch_ibss_for_sending
     [[ -s $PROJECT_ROOT/saved/$device_type/pwnediBSS ]] && cp $PROJECT_ROOT/saved/$device_type/pwnediBSS .
     [[ ! -s pwnediBSS ]] && error "pwnediBSS not found."
-    
-    if [[ -x $primepwn ]]; then
-        log "Sending pwnediBSS using primepwn..."
-        $primepwn pwnediBSS
-        local ret=$?
-        if [[ $ret == 0 ]]; then
-            log "pwnediBSS sent."
-            sleep 2
-            return
-        fi
-        warn "primepwn failed, falling back to ipwndfu..."
-    fi
 
-    log "Sending pwnediBSS using ipwndfu..."
-    local python2="$(command -v python2)"
-    local pyenv2="$HOME/.pyenv/versions/2.7.18/bin/python2"
-    [[ -z $python2 && -e $pyenv2 ]] && python2="$pyenv2"
-    [[ $platform == "macos" ]] && (( $(sw_vers -productVersion | cut -d. -f1) < 12 )) && python2="/usr/bin/python"
-    
-    if [[ -z $python2 ]]; then
-        warn "python2 not found. Install with: pyenv install 2.7.18"
-        error "Cannot send iBSS without python2/ipwndfu."
-    fi
-    
-    # Setup ipwndfu
-    mkdir -p $PROJECT_ROOT/resources/ipwndfu
-    if [[ ! -s $PROJECT_ROOT/resources/ipwndfu/ipwndfu ]]; then
-        log "Downloading ipwndfu..."
-        download_from_url "https://github.com/LukeZGD/ipwndfu/archive/refs/heads/master.zip" ipwndfu.zip
-        unzip -q ipwndfu.zip -d $PROJECT_ROOT/resources/
-        rm -rf $PROJECT_ROOT/resources/ipwndfu
-        mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
-    fi
-    
-    if [[ $platform == "macos" ]]; then
-        [[ -e /opt/local/lib/libusb-1.0.dylib ]] && ln -sf /opt/local/lib "$HOME/lib"
-        [[ -e /opt/homebrew/lib/libusb-1.0.dylib ]] && ln -sf /opt/homebrew/lib "$HOME/lib"
-        [[ -e /usr/local/lib/libusb-1.0.dylib ]] && ln -sf /usr/local/lib "$HOME/lib"
-    fi
-    
-    # S5L8900 might fail with -l, just try
-    cp pwnediBSS $PROJECT_ROOT/resources/ipwndfu/
-    pushd $PROJECT_ROOT/resources/ipwndfu >/dev/null
-    "$python2" ipwndfu -l pwnediBSS
+    log "Sending pwnediBSS using checkm8_bootkit..."
+    $checkm8_bootkit boot pwnediBSS
     local ret=$?
-    popd >/dev/null
-    [[ $ret != 0 ]] && warn "Failed to send pwnediBSS (might be normal for S5L8900)."
-    log "pwnediBSS sent."
-    sleep 2
+    if [[ $ret == 0 ]]; then
+        log "pwnediBSS sent via checkm8_bootkit."
+        sleep 2
+        return
+    fi
+    error "Failed to send pwnediBSS via checkm8_bootkit (exit code: $ret)." \
+        "* Make sure your device is in pwned DFU mode before retrying."
 }
 
 boot_sshrd() {
@@ -1050,61 +1014,7 @@ done"
     esac
 }
 
-# ==================== AUTO-UPDATE ====================
 
-check_update() {
-    log "Checking for updates..."
-    # Fetch the latest commit SHA from the 'main' branch
-    local latest_commit=$(curl -s "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/commits/main" | grep '"sha":' | head -n 1 | cut -d '"' -f 4)
-    
-    if [[ -z "$latest_commit" ]]; then
-        warn "Could not check for updates (requires internet connection)."
-        return
-    fi
-
-    local current_version_file="$PROJECT_ROOT/.version"
-    local current_commit=""
-    [[ -f "$current_version_file" ]] && current_commit=$(cat "$current_version_file")
-
-    if [[ "$latest_commit" != "$current_commit" ]]; then
-        echo
-        print "************************************************"
-        print "::  A NEW UPDATE IS AVAILABLE ON GITHUB!       "
-        print "************************************************"
-        echo
-        read -p "$(input 'Would you like to update now? (y/n): ')" update_choice
-        if [[ "$update_choice" == "y" || "$update_choice" == "Y" ]]; then
-            perform_update "$latest_commit"
-        fi
-    else
-        log "Tool is up to date."
-    fi
-}
-
-perform_update() {
-    local target_commit=$1
-    log "Downloading update..."
-    
-    curl -L "https://github.com/$REPO_OWNER/$REPO_NAME/archive/refs/heads/main.zip" -o update.zip
-    if [[ $? -ne 0 ]]; then
-        error "Failed to download update from GitHub."
-    fi
-
-    log "Extracting files..."
-    mkdir -p update_extract
-    unzip -qo update.zip -d update_extract
-    
-    log "Applying update..."
-    cp -rf update_extract/$REPO_NAME-main/* "$PROJECT_ROOT/"
-    
-    echo "$target_commit" > "$PROJECT_ROOT/.version"
-    
-    rm -rf update.zip update_extract
-
-    log "Update applied successfully! Relaunching..."
-    chmod +x "$PROJECT_ROOT/Bruteforce.sh"
-    exec "$PROJECT_ROOT/Bruteforce.sh" "$@"
-}
 
 # ==================== MAIN ====================
 
@@ -1125,8 +1035,6 @@ main() {
     echo "======================================"
     echo
     
-    check_update
-    echo
     [[ $EUID == 0 ]] && error "Do not run as root."
     
 
