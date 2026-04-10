@@ -886,14 +886,16 @@ ipwndfu_send_ibss() {
     [[ -s $PROJECT_ROOT/saved/$device_type/pwnediBSS ]] && cp $PROJECT_ROOT/saved/$device_type/pwnediBSS .
     [[ ! -s pwnediBSS ]] && error "pwnediBSS not found."
 
-    log "Sending pwnediBSS using checkm8_bootkit..."
+    log "Sending pwnediBSS via checkm8_bootkit..."
     $checkm8_bootkit boot pwnediBSS
     local ret=$?
+    
     if [[ $ret == 0 ]]; then
-        log "pwnediBSS sent via checkm8_bootkit."
+        log "pwnediBSS sent successfully."
         sleep 2
         return
     fi
+    
     error "Failed to send pwnediBSS via checkm8_bootkit (exit code: $ret)." \
         "* Make sure your device is in pwned DFU mode before retrying."
 }
