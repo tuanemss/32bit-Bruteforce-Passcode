@@ -360,69 +360,7 @@ enter_pwndfu() {
         return
     fi
 
-    # 2. Handle S5L8920 (3GS only) - Alloc8 (remove)
-    if [[ $device_type == "iPhone2,1" ]]; then 
-         if [[ -n $device_pwnd ]]; then
-              log "Already in pwned DFU."
-              return
-         fi
-         
-         [[ $device_mode != "DFU" ]] && device_enter_mode DFU
-         
-         log "S5L8920 device detected. Using ipwnder + alloc8..."
-         
-         # Step 2a: Enter PwnDFU first using ipwnder/reipwnder
-         local tool="ipwnder"
-         [[ $platform == "macos" ]] && tool="reipwnder"
-         
-         log "Stage 1: Entering pwnDFU using $tool..."
-         case $tool in
-             "reipwnder" )
-                 mkdir -p shellcode
-                 cp $PROJECT_ROOT/resources/limera1n-shellcode.bin shellcode/
-                 $PROJECT_ROOT/bin/macos/reipwnder -p
-             ;;
-             "ipwnder" ) $ipwnder -p;;
-         esac
-         
-         sleep 1
-         device_pwnd="$($irecovery -q | grep "PWND" | cut -c 7-)"
-         if [[ -z $device_pwnd ]]; then
-              error "Failed to enter pwnDFU (Stage 1). Cannot proceed to alloc8."
-         fi
-         log "Stage 1 success: $device_pwnd"
-         
-         # Step 2b: Run Alloc8
-         log "Stage 2: Running alloc8 exploit (this takes time)..."
-         
-         # Setup and run ipwndfu
-         setup_ipwndfu
-         local python2="$(command -v python2)"
-         [[ -z $python2 ]] && python2="/usr/bin/python"
 
-         # Download 4.3.5 iBSS for alloc8
-         local alloc8_ibss="$PROJECT_ROOT/saved/n88ap-iBSS-4.3.5.img3"
-         if [[ ! -s $alloc8_ibss ]]; then
-             log "Downloading alloc8 iBSS..."
-             "$dir/pzb" -g "Firmware/dfu/iBSS.n88ap.RELEASE.dfu" -o "$alloc8_ibss" http://appldnld.apple.com/iPhone4/041-1965.20110721.gxUB5/iPhone2,1_4.3.5_8L1_Restore.ipsw
-         fi
-         cp "$alloc8_ibss" $PROJECT_ROOT/resources/ipwndfu/
-         
-         # Run alloc8
-         pushd $PROJECT_ROOT/resources/ipwndfu >/dev/null
-         if [[ $platform == "linux" ]]; then
-             sudo "$python2" ipwndfu -x
-         else
-             "$python2" ipwndfu -x
-         fi
-         popd >/dev/null
-         
-         sleep 2
-         device_pwnd="$($irecovery -q | grep "PWND" | cut -c 7-)"
-         log "Alloc8 finished. Device status: $device_pwnd"
-         return
-    fi
-    
     # PWNDFU for A5
     if [[ $device_proc == 5 ]]; then
         if [[ -n $device_pwnd ]]; then
