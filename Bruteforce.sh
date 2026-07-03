@@ -78,7 +78,6 @@ set_tool_paths() {
         sudoloop_pid=$!
         gaster="sudo $dir/gaster"; ipwnder="sudo $dir/ipwnder"
         irecovery="sudo $dir/irecovery"; primepwn="sudo $dir/primepwn"
-        checkm8_bootkit="sudo $dir/checkm8_bootkit"
         sudo killall -9 usbmuxd usbmuxd2 2>/dev/null
         sudo -b $dir/usbmuxd -pf 2>/dev/null
     elif [[ $OSTYPE == "darwin"* ]]; then
@@ -93,7 +92,6 @@ set_tool_paths() {
         scp2="/usr/bin/scp"; ssh2="/usr/bin/ssh"
         gaster="$dir/gaster"; ipwnder="$dir/ipwnder"
         irecovery="$dir/irecovery"; primepwn="$dir/primepwn"
-        checkm8_bootkit="$dir/checkm8_bootkit"
         a6meowing="$dir/a6meowing"
         killall -STOP AMPDevicesAgent AMPDeviceDiscoveryAgent MobileDeviceUpdater 2>/dev/null
         trap "clean" EXIT
@@ -287,6 +285,24 @@ device_dfuhelper() {
 
 # ==================== PWNDFU / EXPLOITS ====================
 
+setup_ipwndfu() {
+    local python2="$(command -v python2)"
+    [[ -z $python2 ]] && python2="/usr/bin/python"
+    [[ ! -x $python2 ]] && error "python2 not found. Required for ipwndfu."
+    
+    mkdir -p $PROJECT_ROOT/resources/ipwndfu
+    if [[ ! -s $PROJECT_ROOT/resources/ipwndfu/ipwndfu ]]; then
+        log "Downloading ipwndfu..."
+        download_from_url "https://github.com/LukeZGD/ipwndfu/archive/refs/heads/master.zip" ipwndfu.zip
+        unzip -q ipwndfu.zip -d $PROJECT_ROOT/resources/
+        rm -rf $PROJECT_ROOT/resources/ipwndfu
+        mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
+        # Patch ipwndfu to handle "no langid" error
+        sed -i '' 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py" 2>/dev/null || \
+        sed -i 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py"
+    fi
+}
+
 enter_pwndfu() {
     [[ $device_mode == "DFU" || $device_mode == "iBSS" || $device_mode == "iBEC" ]] && device_pwnd="$($irecovery -q | grep "PWND" | cut -c 7-)"
     
@@ -379,12 +395,10 @@ enter_pwndfu() {
          # Step 2b: Run Alloc8
          log "Stage 2: Running alloc8 exploit (this takes time)..."
          
-         # Need ipwndfu
+         # Setup and run ipwndfu
+         setup_ipwndfu
          local python2="$(command -v python2)"
-         if [[ -z $python2 ]]; then
-             warn "python2 not found (required for alloc8). Please install python2."
-             error "Missing dependency: python2"
-         fi
+         [[ -z $python2 ]] && python2="/usr/bin/python"
 
          # Download 4.3.5 iBSS for alloc8
          local alloc8_ibss="$PROJECT_ROOT/saved/n88ap-iBSS-4.3.5.img3"
@@ -392,24 +406,15 @@ enter_pwndfu() {
              log "Downloading alloc8 iBSS..."
              "$dir/pzb" -g "Firmware/dfu/iBSS.n88ap.RELEASE.dfu" -o "$alloc8_ibss" http://appldnld.apple.com/iPhone4/041-1965.20110721.gxUB5/iPhone2,1_4.3.5_8L1_Restore.ipsw
          fi
-         
-         # Setup ipwndfu
-         mkdir -p $PROJECT_ROOT/resources/ipwndfu
-         if [[ ! -s $PROJECT_ROOT/resources/ipwndfu/ipwndfu ]]; then
-             log "Downloading ipwndfu..."
-             download_from_url "https://github.com/LukeZGD/ipwndfu/archive/refs/heads/master.zip" ipwndfu.zip
-             unzip -q ipwndfu.zip -d $PROJECT_ROOT/resources/
-             rm -rf $PROJECT_ROOT/resources/ipwndfu
-                mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
-                # Patch ipwndfu to handle "no langid" error
-                sed -i '' 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py" 2>/dev/null || \
-                sed -i 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py"
-            fi
          cp "$alloc8_ibss" $PROJECT_ROOT/resources/ipwndfu/
          
          # Run alloc8
          pushd $PROJECT_ROOT/resources/ipwndfu >/dev/null
-         "$python2" ipwndfu -x
+         if [[ $platform == "linux" ]]; then
+             sudo "$python2" ipwndfu -x
+         else
+             "$python2" ipwndfu -x
+         fi
          popd >/dev/null
          
          sleep 2
@@ -478,25 +483,16 @@ enter_pwndfu() {
         "ipwnder32" ) "$dir/ipwnder32" -p;;
         "ipwnder_lite" ) $ipwnder -d;;
         "ipwndfu" )
+            setup_ipwndfu
             local python2="$(command -v python2)"
             [[ -z $python2 ]] && python2="/usr/bin/python"
-            [[ ! -x $python2 ]] && error "python2 not found. Required for ipwndfu."
-            
-            # Setup ipwndfu
-            mkdir -p $PROJECT_ROOT/resources/ipwndfu
-            if [[ ! -s $PROJECT_ROOT/resources/ipwndfu/ipwndfu ]]; then
-                log "Downloading ipwndfu..."
-                download_from_url "https://github.com/LukeZGD/ipwndfu/archive/refs/heads/master.zip" ipwndfu.zip
-                unzip -q ipwndfu.zip -d $PROJECT_ROOT/resources/
-                rm -rf $PROJECT_ROOT/resources/ipwndfu
-                mv $PROJECT_ROOT/resources/ipwndfu-* $PROJECT_ROOT/resources/ipwndfu
-                # Patch ipwndfu to handle "no langid" error
-                sed -i '' 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py" 2>/dev/null || \
-                sed -i 's/raise ValueError("The device has no langid")/print("\\n[!] ValueError: The device has no langid\\n[!] Please QUICKLY unplug and replug your device now, then run the script again.\\n"); raise ValueError("The device has no langid")/' "$PROJECT_ROOT/resources/ipwndfu/usb/util.py"
-            fi
             
             pushd $PROJECT_ROOT/resources/ipwndfu >/dev/null
-            $python2 ipwndfu -p
+            if [[ $platform == "linux" ]]; then
+                sudo "$python2" ipwndfu -p
+            else
+                "$python2" ipwndfu -p
+            fi
             sleep 2
             popd >/dev/null
         ;;
@@ -886,9 +882,19 @@ ipwndfu_send_ibss() {
     [[ -s $PROJECT_ROOT/saved/$device_type/pwnediBSS ]] && cp $PROJECT_ROOT/saved/$device_type/pwnediBSS .
     [[ ! -s pwnediBSS ]] && error "pwnediBSS not found."
 
-    log "Sending pwnediBSS via checkm8_bootkit..."
-    $checkm8_bootkit boot pwnediBSS
+    setup_ipwndfu
+    local python2="$(command -v python2)"
+    [[ -z $python2 ]] && python2="/usr/bin/python"
+
+    log "Sending pwnediBSS via ipwndfu..."
+    pushd $PROJECT_ROOT/resources/ipwndfu >/dev/null
+    if [[ $platform == "linux" ]]; then
+        sudo "$python2" ipwndfu -l "$PROJECT_ROOT/tmp$$/pwnediBSS"
+    else
+        "$python2" ipwndfu -l "$PROJECT_ROOT/tmp$$/pwnediBSS"
+    fi
     local ret=$?
+    popd >/dev/null
     
     if [[ $ret == 0 ]]; then
         log "pwnediBSS sent successfully."
@@ -896,7 +902,7 @@ ipwndfu_send_ibss() {
         return
     fi
     
-    error "Failed to send pwnediBSS via checkm8_bootkit (exit code: $ret)." \
+    error "Failed to send pwnediBSS via ipwndfu (exit code: $ret)." \
         "* Make sure your device is in pwned DFU mode before retrying."
 }
 
