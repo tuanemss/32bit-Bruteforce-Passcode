@@ -538,8 +538,13 @@ select_ramdisk_version() {
             device_target_build="7E18"
             return
         ;;
-        iPhone1,2 | iPod2,1 )
-            print "* Using iOS 4.2.1 (8C148) for 3G / iPod 2"
+        iPhone1,2 )
+            print "* Using iOS 3.1.3 (7E18) for 3G"
+            device_target_build="7E18"
+            return
+        ;;
+        iPod2,1 )
+            print "* Using iOS 4.2.1 (8C148) for iPod 2"
             device_target_build="8C148"
             return
         ;;
@@ -603,14 +608,14 @@ create_sshrd() {
         esac
         
         log "$getcomp"
-        # Fallback names
+        # Fallback names (device_model is stripped of "ap", so re-add it)
         if [[ -z $name ]]; then
-             if [[ $getcomp == "iBSS" ]]; then name="iBSS.$device_model.RELEASE.dfu";
-             elif [[ $getcomp == "iBEC" ]]; then name="iBEC.$device_model.RELEASE.dfu"; 
+             if [[ $getcomp == "iBSS" ]]; then name="iBSS.${device_model}ap.RELEASE.dfu";
+             elif [[ $getcomp == "iBEC" ]]; then name="iBEC.${device_model}ap.RELEASE.dfu"; 
              fi
         fi
-        # S5L8900 Kernelcache has a generic name
-        if [[ $device_proc == 1 && $getcomp == "Kernelcache" ]]; then
+        # S5L8900 Kernelcache uses a generic name, but only if the keys did not provide one
+        if [[ -z $name && $device_proc == 1 && $getcomp == "Kernelcache" ]]; then
             name="kernelcache.release.s5l8900x"
         fi
         
@@ -618,13 +623,18 @@ create_sshrd() {
         [[ ! -s $name ]] && error "Failed to get $name."
         [[ ! -s $ramdisk_path/$name ]] && cp $name $ramdisk_path/
         mv $name $getcomp.orig
-        "$dir/xpwntool" $getcomp.orig $getcomp.dec -iv $iv -k $key -decrypt
+        if [[ ( $getcomp == "iBSS" || $getcomp == "Kernelcache" ) && ( $device_proc == 1 || $device_type == "iPod2,1" ) ]]; then
+            # Legacy-iOS-Kit keeps the raw payload for iBSS/Kernelcache on these devices (no -decrypt)
+            "$dir/xpwntool" $getcomp.orig $getcomp.dec -iv $iv -k $key
+        else
+            "$dir/xpwntool" $getcomp.orig $getcomp.dec -iv $iv -k $key -decrypt
+        fi
     done
     
     # Patch Ramdisk
     log "Patching RestoreRamdisk..."
     "$dir/xpwntool" RestoreRamdisk.dec Ramdisk.raw
-    "$dir/hfsplus" Ramdisk.raw grow 30000000
+    "$dir/hfsplus" Ramdisk.raw grow 32000000
     "$dir/hfsplus" Ramdisk.raw untar $PROJECT_ROOT/resources/sshrd/sbplist.tar 2>/dev/null
     
     if [[ $device_proc == 1 || $device_type == "iPod2,1" || $device_type == "iPad1,1" ]]; then
@@ -690,32 +700,41 @@ create_sshrd() {
     
     "$dir/xpwntool" Ramdisk.raw Ramdisk.dmg -t RestoreRamdisk.dec
     
-    # Patch iBSS
-    log "Patching iBSS..."
+    # Patch iBSS / Kernelcache (legacy) or iBSS / iBEC / Kernelcache (A4+)
+    local legacy_patch="$PROJECT_ROOT/resources/patch/legacy/$device_type"
     if [[ $device_proc == 1 || $device_type == "iPod2,1" ]]; then
-        $bspatch iBSS.orig iBSS $PROJECT_ROOT/resources/patch/iBSS.${device_model}ap.RELEASE.patch
+        # Identical to Legacy-iOS-Kit device_ramdisk(): bspatch the decrypted raw, re-wrap with the original img3
+        log "Patching iBSS (legacy)..."
+        $bspatch iBSS.dec iBSS.patched "$legacy_patch/iBSS.${device_model}ap.RELEASE.patch"
+        "$dir/xpwntool" iBSS.patched iBSS -t iBSS.orig
+
+        log "Patching Kernelcache (legacy)..."
+        mv Kernelcache.dec Kernelcache0.dec
+        $bspatch Kernelcache0.dec Kernelcache.patched "$legacy_patch/kernelcache.release.patch"
+        local kc_iv kc_key
+        kc_iv=$(echo $device_fw_key | $jq -j '.keys[] | select(.image == "Kernelcache") | .iv')
+        kc_key=$(echo $device_fw_key | $jq -j '.keys[] | select(.image == "Kernelcache") | .key')
+        "$dir/xpwntool" Kernelcache.patched Kernelcache.dec -t Kernelcache.orig -iv $kc_iv -k $kc_key
+
+        # DeviceTree is sent unmodified on these devices
+        rm -f DeviceTree.dec
+        mv DeviceTree.orig DeviceTree.dec
+
+        # iOS 3.x/4.x legacy builds do not need a patched iBEC
+        cp iBEC.dec iBEC 2>/dev/null
     else
+        log "Patching iBSS..."
         "$dir/xpwntool" iBSS.dec iBSS.raw
         "$dir/iBoot32Patcher" iBSS.raw iBSS.patched --rsa --debug
         "$dir/xpwntool" iBSS.patched iBSS -t iBSS.dec
-    fi
-    
-    # Patch iBEC
-    log "Patching iBEC..."
-    "$dir/xpwntool" iBEC.dec iBEC.raw
-    "$dir/iBoot32Patcher" iBEC.raw iBEC.patched --rsa --debug -b "rd=md0 -v amfi=0xff cs_enforcement_disable=1"
-    "$dir/xpwntool" iBEC.patched iBEC -t iBEC.dec
-    
-    # Patch Kernel
-    log "Patching Kernelcache..."
-    if [[ $device_proc == 1 ]]; then
-        # S5L8900 Kernel Patching
-        log "S5L8900 kernel patch from legacy ios kit."
-        $bspatch Kernelcache.dec Kernelcache.patched $PROJECT_ROOT/resources/patch/kernelcache.release.s5l8900x.patch
-    elif [[ $device_type == "iPod2,1" ]]; then
-        log "iPod touch 2 kernel patch."
-        $bspatch Kernelcache.dec Kernelcache.patched $PROJECT_ROOT/resources/patch/kernelcache.release.n72.patch
-    else 
+
+        log "Patching iBEC..."
+        "$dir/xpwntool" iBEC.dec iBEC.raw
+        "$dir/iBoot32Patcher" iBEC.raw iBEC.patched --rsa --debug -b "rd=md0 -v amfi=0xff cs_enforcement_disable=1"
+        "$dir/xpwntool" iBEC.patched iBEC -t iBEC.dec
+
+        # Patch Kernel
+        log "Patching Kernelcache..."
         # kernel Patch
         cp Kernelcache.dec Kernelcache.dec.bak
         "$dir/xpwntool" Kernelcache.dec Kernelcache.raw
@@ -731,7 +750,7 @@ create_sshrd() {
                 8*) ios_major="4";;
                 7*) ios_major="3";;
             esac
-            
+
             # Determine Arch
             local cpu_arch="armv7"
             [[ $device_proc == 1 || $device_type == "iPod2,1" ]] && cpu_arch="armv6"
@@ -759,17 +778,19 @@ create_sshrd() {
 patch_ibss_for_sending() {
     local build_id="${device_target_build:-12H321}"
     
-    # A5 fallback for older versions
-    case $build_id in
-        [56789]* )
-            case $device_type in
-                iPad2,* | iPad3,[123] | iPod5,1 ) build_id="12H321";;  # A5
-                iPad3,[456] | iPhone5,* ) build_id="12H321";;  # A6
-                * ) build_id="10B329";;  # Fallback
-            esac
-            log "Using iBSS from build $build_id for A5/A6 workaround"
-        ;;
-    esac
+    # A5 fallback for older versions (A5/A6 only; legacy devices keep their own build)
+    if (( device_proc >= 5 )); then
+        case $build_id in
+            [56789]* )
+                case $device_type in
+                    iPad2,* | iPad3,[123] | iPod5,1 ) build_id="12H321";;  # A5
+                    iPad3,[456] | iPhone5,* ) build_id="12H321";;  # A6
+                    * ) build_id="10B329";;  # Fallback
+                esac
+                log "Using iBSS from build $build_id for A5/A6 workaround"
+            ;;
+        esac
+    fi
     
     log "Creating pwnediBSS from build $build_id..."
     device_fw_key_check $build_id
@@ -791,11 +812,16 @@ patch_ibss_for_sending() {
     cp iBSS.orig $PROJECT_ROOT/saved/$device_type/iBSS_$build_id.dfu 2>/dev/null
     iv=$(echo $device_fw_key | $jq -j '.keys[] | select(.image == "iBSS") | .iv')
     key=$(echo $device_fw_key | $jq -j '.keys[] | select(.image == "iBSS") | .key')
-    "$dir/xpwntool" iBSS.orig iBSS.dec -iv $iv -k $key -decrypt
-    
     if [[ $device_proc == 1 || $device_type == "iPod2,1" ]]; then
-        log "Patching iBSS for legacy device..."
-        $bspatch iBSS.orig pwnediBSS $PROJECT_ROOT/resources/patch/iBSS.${device_model}ap.RELEASE.patch
+        "$dir/xpwntool" iBSS.orig iBSS.dec -iv $iv -k $key
+    else
+        "$dir/xpwntool" iBSS.orig iBSS.dec -iv $iv -k $key -decrypt
+    fi
+
+    if [[ $device_proc == 1 || $device_type == "iPod2,1" ]]; then
+        log "Patching iBSS (legacy)..."
+        $bspatch iBSS.dec iBSS.patched "$PROJECT_ROOT/resources/patch/legacy/$device_type/iBSS.${device_model}ap.RELEASE.patch"
+        "$dir/xpwntool" iBSS.patched pwnediBSS -t iBSS.orig
     else
         "$dir/xpwntool" iBSS.dec iBSS.raw
         "$dir/iBoot32Patcher" iBSS.raw pwnediBSS --rsa
